@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Deployment and editor files
+.vercel/

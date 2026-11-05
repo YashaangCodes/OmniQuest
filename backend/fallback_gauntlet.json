@@ -1,0 +1,265 @@
+{
+  "topic": "General Technology",
+  "gauntlet": [
+    {
+      "stage": 1,
+      "tier": 1,
+      "question": "What does CPU stand for?",
+      "options": [
+        "Central Processing Unit",
+        "Computer Personal Utility",
+        "Central Program Upload",
+        "Core Power Unit"
+      ],
+      "correct_answer": "Central Processing Unit",
+      "explanation": "The CPU is the main processor that executes instructions in a computer."
+    },
+    {
+      "stage": 2,
+      "tier": 1,
+      "question": "Which of these is an example of hardware?",
+      "options": [
+        "A web browser",
+        "A keyboard",
+        "An operating system",
+        "A spreadsheet file"
+      ],
+      "correct_answer": "A keyboard",
+      "explanation": "Hardware is physical equipment. Software includes programs, operating systems, and files."
+    },
+    {
+      "stage": 3,
+      "tier": 1,
+      "question": "What does URL stand for?",
+      "options": [
+        "Universal Routing Link",
+        "User Resource Login",
+        "Uniform Resource Locator",
+        "United Remote Library"
+      ],
+      "correct_answer": "Uniform Resource Locator",
+      "explanation": "A URL is the address used to locate a resource on the web."
+    },
+    {
+      "stage": 4,
+      "tier": 1,
+      "question": "Which unit is most commonly used to measure file size?",
+      "options": [
+        "Hertz",
+        "Bytes",
+        "Pixels",
+        "Watts"
+      ],
+      "correct_answer": "Bytes",
+      "explanation": "Digital storage and file sizes are measured in bytes and multiples such as kilobytes and megabytes."
+    },
+    {
+      "stage": 5,
+      "tier": 1,
+      "question": "What is the main purpose of an operating system?",
+      "options": [
+        "To design websites only",
+        "To manage hardware and software resources",
+        "To replace all application programs",
+        "To connect printers without electricity"
+      ],
+      "correct_answer": "To manage hardware and software resources",
+      "explanation": "An operating system coordinates hardware, memory, files, and the programs that run on a device."
+    },
+    {
+      "stage": 6,
+      "tier": 2,
+      "question": "How is RAM different from a hard drive or SSD?",
+      "options": [
+        "RAM stores data permanently even when power is off",
+        "RAM is fast temporary memory used while programs run",
+        "RAM is only used to display images",
+        "RAM replaces the need for an operating system"
+      ],
+      "correct_answer": "RAM is fast temporary memory used while programs run",
+      "explanation": "RAM is volatile working memory. Drives provide slower long-term storage that persists after shutdown."
+    },
+    {
+      "stage": 7,
+      "tier": 2,
+      "question": "Why do HTTPS websites use encryption?",
+      "options": [
+        "To make pages load with more advertisements",
+        "To hide a site from search engines",
+        "To protect data in transit between browser and server",
+        "To convert websites into mobile apps"
+      ],
+      "correct_answer": "To protect data in transit between browser and server",
+      "explanation": "HTTPS uses TLS encryption so passwords, cookies, and other data are harder for attackers to intercept."
+    },
+    {
+      "stage": 8,
+      "tier": 2,
+      "question": "What is the relationship between a bit and a byte?",
+      "options": [
+        "A byte is 8 bits",
+        "A bit is 8 bytes",
+        "They are two names for the same unit",
+        "A byte is 1000 bits"
+      ],
+      "correct_answer": "A byte is 8 bits",
+      "explanation": "A bit is a single 0 or 1. Eight bits grouped together form one byte."
+    },
+    {
+      "stage": 9,
+      "tier": 2,
+      "question": "What does an IP address identify on a network?",
+      "options": [
+        "The color theme of a website",
+        "A device or network interface so data can be routed to it",
+        "The brand of a computer's processor",
+        "The password used to unlock Wi-Fi"
+      ],
+      "correct_answer": "A device or network interface so data can be routed to it",
+      "explanation": "IP addresses are numeric identifiers used to send packets to the correct host on a network."
+    },
+    {
+      "stage": 10,
+      "tier": 2,
+      "question": "Why is cloud storage not the same thing as RAM?",
+      "options": [
+        "Cloud storage is always faster than RAM",
+        "Cloud storage keeps files on remote servers, while RAM is local working memory",
+        "RAM can only store photos",
+        "Cloud storage exists only on USB drives"
+      ],
+      "correct_answer": "Cloud storage keeps files on remote servers, while RAM is local working memory",
+      "explanation": "Cloud services store data on remote machines. RAM is short-term memory inside the device you are using."
+    },
+    {
+      "stage": 11,
+      "tier": 3,
+      "question": "A cafe's public Wi-Fi has no login page. Which practice best reduces the risk of someone reading your traffic?",
+      "options": [
+        "Using HTTP instead of HTTPS for every site",
+        "Turning off the device firewall",
+        "Using HTTPS or a trusted VPN while on the network",
+        "Sharing your screen so others can verify the connection"
+      ],
+      "correct_answer": "Using HTTPS or a trusted VPN while on the network",
+      "explanation": "Open Wi-Fi can be watched by nearby attackers. Encrypted HTTPS or a VPN protects the contents of your traffic."
+    },
+    {
+      "stage": 12,
+      "tier": 3,
+      "question": "A laptop feels slow while many browser tabs are open, but the disk still has free space. What is the most likely bottleneck?",
+      "options": [
+        "The display resolution is too low",
+        "The machine has run out of available RAM",
+        "The computer no longer has an IP address",
+        "The CPU clock is measured in bytes"
+      ],
+      "correct_answer": "The machine has run out of available RAM",
+      "explanation": "Many tabs consume working memory. When RAM is exhausted, the system swaps to disk and feels sluggish even with free storage."
+    },
+    {
+      "stage": 13,
+      "tier": 3,
+      "question": "You copy a 5 GB video onto a USB flash drive formatted as FAT32 and the copy fails. What is the most likely reason?",
+      "options": [
+        "FAT32 cannot store a single file larger than 4 GB minus 1 byte",
+        "USB drives can only store text files",
+        "Videos must be stored in RAM, not on a drive",
+        "FAT32 requires an internet connection to save files"
+      ],
+      "correct_answer": "FAT32 cannot store a single file larger than 4 GB minus 1 byte",
+      "explanation": "FAT32 has a maximum file size of 4 GB minus 1 byte, so a 5 GB video cannot be copied unless the drive uses a newer format such as exFAT or NTFS."
+    },
+    {
+      "stage": 14,
+      "tier": 3,
+      "question": "A phishing email looks like it came from your bank and asks you to 'confirm' a password on a linked page. What should you do?",
+      "options": [
+        "Reply with the password so the bank can verify you",
+        "Open the link and enter the password quickly",
+        "Avoid the link and sign in only through the bank's official app or typed URL",
+        "Forward the email to everyone in your contacts"
+      ],
+      "correct_answer": "Avoid the link and sign in only through the bank's official app or typed URL",
+      "explanation": "Phishing pages imitate real sites. Going through a known official channel avoids handing credentials to an attacker."
+    },
+    {
+      "stage": 15,
+      "tier": 3,
+      "question": "A team collaborates on a document in the cloud. Two people edit at once and later see unexpected duplicate paragraphs. Which concept best explains this?",
+      "options": [
+        "The CPU has no cache",
+        "Concurrent edits can conflict when copies of the same file are changed separately",
+        "HTTPS has stopped encrypting the file",
+        "The file was converted from bits into watts"
+      ],
+      "correct_answer": "Concurrent edits can conflict when copies of the same file are changed separately",
+      "explanation": "If two users change overlapping content without proper merge or locking, both sets of edits can survive as duplicated or conflicting text."
+    },
+    {
+      "stage": 16,
+      "tier": 4,
+      "question": "A site loads over HTTPS, but the browser warns that the certificate is issued for a different domain. What is the safest conclusion?",
+      "options": [
+        "Encryption is present, but the identity of the server may not match the site you intended",
+        "The page cannot contain any images",
+        "Your RAM is full, so certificates cannot be checked",
+        "HTTPS warnings always mean the Wi-Fi password is wrong"
+      ],
+      "correct_answer": "Encryption is present, but the identity of the server may not match the site you intended",
+      "explanation": "TLS can still encrypt traffic to the machine you reached. A name mismatch means you may not be talking to the legitimate site."
+    },
+    {
+      "stage": 17,
+      "tier": 4,
+      "question": "An office computer can open websites by IP address but cannot open them by name such as example.com. Which component is most likely failing?",
+      "options": [
+        "The monitor cable",
+        "DNS resolution of domain names to IP addresses",
+        "The machine's GPU",
+        "The FAT32 file size limit"
+      ],
+      "correct_answer": "DNS resolution of domain names to IP addresses",
+      "explanation": "Reaching a host by numeric IP shows basic network connectivity. Failure by name points to DNS, which translates domains into addresses."
+    },
+    {
+      "stage": 18,
+      "tier": 4,
+      "question": "A backup copies files every night but is stored on the same disk as the original data. Why is this a weak disaster-recovery plan?",
+      "options": [
+        "Nightly copies use too many IP addresses",
+        "A disk failure or ransomware event can destroy both the originals and the backup",
+        "Backups are only valid if stored in RAM",
+        "Operating systems refuse to read a second copy of a file"
+      ],
+      "correct_answer": "A disk failure or ransomware event can destroy both the originals and the backup",
+      "explanation": "Good backups are separated in location and often offline or versioned, so one incident cannot wipe production data and its only copy."
+    },
+    {
+      "stage": 19,
+      "tier": 4,
+      "question": "A programmer stores passwords as unsalted SHA-1 hashes. After a database leak, why are users still at high risk?",
+      "options": [
+        "SHA-1 hashes cannot be stored on SSDs",
+        "Attackers can try common passwords and compare them to fast, unsalted hashes, especially with rainbow tables",
+        "HTTPS will automatically publish the original passwords",
+        "The CPU will convert each hash back into the exact original password on boot"
+      ],
+      "correct_answer": "Attackers can try common passwords and compare them to fast, unsalted hashes, especially with rainbow tables",
+      "explanation": "Unsalted fast hashes let attackers test huge password lists efficiently and reuse precomputed tables. Password hashing should be slow and unique per user."
+    },
+    {
+      "stage": 20,
+      "tier": 4,
+      "question": "Golden Challenge: A traveler uses public Wi-Fi to open a bank site. The browser shows a valid HTTPS padlock, but a rogue hotspot uses DNS spoofing to send the traveler to an attacker server that has its own HTTPS certificate for a look-alike domain the traveler did not notice in the address bar. Which pair of concepts together best explain why the padlock appeared and why the traveler is still in danger?",
+      "options": [
+        "HTTPS can encrypt traffic to whichever host the browser actually connected to, while DNS spoofing can steer the name lookup toward a malicious host if the user does not verify the real domain",
+        "RAM encryption makes every Wi-Fi network trustworthy, and FAT32 blocks phishing",
+        "The padlock means the CPU verified the bank's private key locally, and DNS is only used for email",
+        "Cloud storage certificates replace DNS, so a padlock proves both identity and backup safety"
+      ],
+      "correct_answer": "HTTPS can encrypt traffic to whichever host the browser actually connected to, while DNS spoofing can steer the name lookup toward a malicious host if the user does not verify the real domain",
+      "explanation": "TLS confidentiality is hop-to-the-connected-server, not a guarantee you reached the intended bank. DNS can be abused to land you on a similar-looking domain; the padlock only matches that other certificate. Checking the true URL is the second required defense."
+    }
+  ]
+}
