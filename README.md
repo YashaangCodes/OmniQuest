@@ -1,51 +1,60 @@
-# ⚡ OmniQuest v0
+# ⚡ OmniQuest v0.5
 
-**Play the live demo:** [https://omni-quest-v0.vercel.app](https://omni-quest-v0.vercel.app)
+OmniQuest is an AI-powered, adaptive multiple-choice gauntlet that generates a 20-stage learning ladder on absolutely any topic you type. 
 
-OmniQuest is an AI-powered, gamified learning gauntlet. This repository holds **Version 0 (v0)**—the foundational base model of the game engine. 
+Version 0.5 represents a major architectural upgrade from the initial v0 MVP, focusing heavily on gameplay fairness, UI/UX polish, and robust API security.
 
-While there are countless basic quiz generators on the internet, OmniQuest is built with a proper full-stack architecture. It features a custom FastAPI backend, strict server-side answer validation to prevent cheating, and an automated fallback system to ensure the application never crashes during API rate limits.
+## 🛠 The Evolution: Gaps in v0 & How We Fixed Them
 
-## 🚀 The Vision: Why v0?
-This version is the core engine. It proves the foundational mechanics: dynamic AI prompt generation, strict JSON data validation, and tiered progression. 
+Building an AI-generated game introduced several unpredictable edge cases. Here is how v0.5 addresses the biggest gaps from the initial launch:
 
-This is just the beginning. **Future updates (v1 and beyond) will introduce:**
-* Fully functional tactical power-ups (AI Hint, Time Freeze, 50/50).
-* Streak multipliers and advanced Insight Points (IP) scoring.
-* User authentication and global leaderboards.
-* Multiplayer and head-to-head challenges.
+### 1. The "Spotify Problem" (AI Option Bias)
+* **The Gap:** In v0, the AI heavily favoured placing the correct answer in Option B (up to 40% of the time). When we initially applied true mathematical randomness (`random.shuffle`), it created annoying statistical clumps (e.g., the correct answer being B four times in a row). 
+* **The Fix:** Implemented a **Bounded Randomness Algorithm** in Python. The backend now pre-generates a 20-position array with strict mathematical limits: the correct answer can never appear in the same slot more than *twice consecutively*, and no single slot can hold the correct answer more than *7 times total*. It is perfectly balanced but impossible to card-count.
 
-## 🛠️ Tech Stack
-* **Frontend:** Next.js, React, Tailwind CSS (Deployed on Vercel)
-* **Backend:** Python, FastAPI (Deployed on Render)
-* **AI Engine:** Google Gemini Flash (via the official `google-genai` SDK)
+### 2. The API Spam & Gibberish Inputs
+* **The Gap:** Users could type "....." or "asdfghjkl", bypassing basic empty-string checks and forcing the AI to hallucinate random general knowledge questions, wasting API quota.
+* **The Fix:** Built a **Two-Layer Validation System**. First, deterministic Python validation ensures the input contains at least one actual alphanumeric character (blocking punctuation spam). Second, a single-pass AI Semantic Validation forces Gemini to evaluate if the topic is real before generating the gauntlet, returning a clean HTTP 400 if the topic is uninterpretable.
 
-## ✨ Core v0 Features
-* **Dynamic Gauntlet:** Generates a 20-stage MCQ progression on any topic on the fly.
-* **Tiered Progression:** 4 difficulty tiers. Players must earn enough Insight Points in the current tier to unlock the next one.
-* **Server-Side Security:** Correct answers are never exposed in the frontend payload. The Python backend validates player guesses in real-time.
-* **Crash-Proof Fallback:** If the AI API times out or hits a high-demand 503 error, the backend silently serves a pre-validated, hardcoded sample round so the game session stays alive.
+### 3. The "Blink-and-Miss" Explanations
+* **The Gap:** After submitting an answer, v0 used a strict 2-second `setTimeout` before automatically jumping to the next stage. Players couldn't actually read the AI's explanations.
+* **The Fix:** **Manual Stage Progression.** The timer now completely freezes after an answer is submitted, and the game patiently waits for the player to click a prominent "Next Stage" button, allowing unlimited time to read the facts.
 
-## 💻 Run it Locally
+### 4. The Scrolling Nightmare
+* **The Gap:** On mobile devices, long AI-generated questions pushed the power-up buttons off the screen, forcing players to scroll up and down constantly while a 20-second timer was ticking.
+* **The Fix:** Completely rebuilt the Next.js gameplay arena using a **Fixed Viewport Architecture** (`h-dvh max-h-dvh overflow-hidden`). The top stats bar and bottom power-ups bar are now permanently anchored, while only the center question card scrolls internally. Zero page-level scrolling required.
 
-### 1. Backend Engine
-```bash
-cd backend
-python -m venv .venv
-# Activate venv (Windows: .\.venv\Scripts\activate | Mac/Linux: source .venv/bin/activate)
-pip install -r requirements.txt
+## ✨ New Features in v0.5
+- **Dual-Input Engine:** Players can now define a Topic (e.g., "Physics") AND a Target Level/Context (e.g., "10th Grade" or "Pop Culture").
+- **Forfeit Run:** A new escape hatch allows players to end a run early while preserving their accumulated Insight Points and routing directly to the post-game analytics screen.
+- **Cold-Start Warning:** A dynamic UI state that warns users if the backend server is waking up from a cold sleep.
+- **"How to Play" Modal:** A clean, accessible overlay explaining the Insight Points mechanics and Tier progression.
 
-# Set your API key
-# Windows PowerShell: $env:GEMINI_API_KEY="your_api_key_here"
-# Mac/Linux: export GEMINI_API_KEY="your_api_key_here"
+## 💻 Tech Stack
+- **Frontend:** Next.js 14, React, Tailwind CSS, TypeScript
+- **Backend:** Python 3, FastAPI, Uvicorn
+- **AI Engine:** Google Gemini API
+- **Deployment:** Vercel (Frontend) / Render (Backend)
 
-python -m uvicorn main:app --reload
-```
+## 🚀 Local Setup
 
-### 2. Frontend UI
-```bash
-cd frontend
-npm install
-npm run dev
-```
-*The frontend runs on `localhost:3000` and defaults to calling the backend at `localhost:8000`.*
+1. **Clone the repository:**
+   ```bash
+   git clone [https://github.com/YourUsername/OmniQuest-v0.5.git](https://github.com/YourUsername/OmniQuest-v0.5.git)
+   ```
+2. **Start the Backend:**
+   ```bash
+   cd backend
+   python -m venv .venv
+   source .venv/Scripts/activate # or source .venv/bin/activate on Mac/Linux
+   pip install -r requirements.txt
+   # Ensure you have your GEMINI_API_KEY set in your environment
+   python -m uvicorn main:app --reload
+   ```
+3. **Start the Frontend:**
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+4. Open `http://localhost:3000` in your browser.
