@@ -255,12 +255,159 @@ def has_reasonable_option_length_balance(options: list[str]) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Bounded Randomness for Correct-Answer Placement
+# ---------------------------------------------------------------------------
+
+MAX_CONSECUTIVE_POSITION_LIMIT = 2
+MAX_TOTAL_POSITION_LIMIT = 7
+
+
+def validate_placement_sequence(
+    sequence: list[int],
+    length: int = EXPECTED_GAUNTLET_LENGTH,
+    num_options: int = 4,
+    max_consecutive: int = MAX_CONSECUTIVE_POSITION_LIMIT,
+    max_total: int = MAX_TOTAL_POSITION_LIMIT,
+) -> bool:
+    """
+    Validate that a placement sequence satisfies all bounded randomness constraints:
+    1. Exactly `length` positions exist.
+    2. Every position is an integer between 0 and `num_options - 1`.
+    3. No position appears more than `max_consecutive` times consecutively.
+    4. No position appears more than `max_total` times in total across all questions.
+    """
+    if not isinstance(sequence, list) or len(sequence) != length:
+        return False
+
+    if any(not isinstance(p, int) or p < 0 or p >= num_options for p in sequence):
+        return False
+
+    # Check maximum consecutive limit: no position more than max_consecutive consecutively
+    for i in range(len(sequence) - max_consecutive):
+        if all(sequence[i + k] == sequence[i] for k in range(1, max_consecutive + 1)):
+            return False
+
+    # Check maximum total limit: no individual position more than max_total in total
+    counts = [sequence.count(p) for p in range(num_options)]
+    if any(c > max_total for c in counts):
+        return False
+
+    return True
+
+
+def generate_bounded_placement_sequence(
+    length: int = EXPECTED_GAUNTLET_LENGTH,
+    num_options: int = 4,
+    max_consecutive: int = MAX_CONSECUTIVE_POSITION_LIMIT,
+    max_total: int = MAX_TOTAL_POSITION_LIMIT,
+    max_generate_validate_attempts: int = 100,
+) -> list[int]:
+    """
+    Generate a randomized sequence of target option indices (0=A, 1=B, 2=C, 3=D)
+    under bounded randomness constraints:
+    - Exactly `length` (20) target indices.
+    - Maximum consecutive limit: no position appears more than twice consecutively.
+    - Maximum total limit: no position appears more than 7 times across all 20 questions.
+    - Avoids a rigid 5-5-5-5 distribution and predictable repeating patterns.
+
+    Uses generate-and-validate (rejection sampling) to draw uniformly among all valid
+    sequences, with a randomized backtracking solver as a guaranteed fallback.
+    """
+    if length <= 0:
+        return []
+
+    # 1. Generate-and-validate approach: provides genuinely uniform randomization
+    for _ in range(max_generate_validate_attempts):
+        candidate = [random.randrange(num_options) for _ in range(length)]
+        if validate_placement_sequence(
+            candidate, length, num_options, max_consecutive, max_total
+        ):
+            return candidate
+
+    # 2. Backtracking approach: guaranteed to find a valid sequence if rejection sampling is exhausted
+    def _backtrack(seq: list[int], counts: list[int]) -> list[int] | None:
+        if len(seq) == length:
+            return seq
+
+        candidates = list(range(num_options))
+        random.shuffle(candidates)
+        for c in candidates:
+            if counts[c] >= max_total:
+                continue
+            if len(seq) >= max_consecutive and all(
+                seq[-k] == c for k in range(1, max_consecutive + 1)
+            ):
+                continue
+            rem = length - (len(seq) + 1)
+            other_capacity = sum(
+                max_total - counts[i] for i in range(num_options) if i != c
+            )
+            if rem > other_capacity + (max_total - (counts[c] + 1)):
+                continue
+
+            seq.append(c)
+            counts[c] += 1
+            result = _backtrack(seq, counts)
+            if result is not None:
+                return result
+            seq.pop()
+            counts[c] -= 1
+
+        return None
+
+    backtracked = _backtrack([], [0] * num_options)
+    if backtracked is not None and validate_placement_sequence(
+        backtracked, length, num_options, max_consecutive, max_total
+    ):
+        return backtracked
+
+    # 3. Deterministic safe fallback (interleaved distribution: 0, 1, 2, 3, 0, 1, ...)
+    fallback = [i % num_options for i in range(length)]
+    if validate_placement_sequence(
+        fallback, length, num_options, max_consecutive, max_total
+    ):
+        logger.warning("generate_bounded_placement_sequence used deterministic fallback.")
+        return fallback
+
+    raise RuntimeError(
+        f"Failed to generate a valid bounded placement sequence of length {length}."
+    )
+
+
 def shuffle_question_options(payload: GauntletPayload) -> GauntletPayload:
-    """Programmatically randomize option order for each question while maintaining correct answer mapping."""
-    for question in payload.gauntlet:
-        options = list(question.options)
-        random.shuffle(options)
-        question.options = options
+    """
+    Programmatically randomize option order for each question using bounded randomness.
+
+    1. Generates a validated sequence of exactly 20 target positions (0=A, 1=B, 2=C, 3=D).
+    2. For each question:
+       - Preserves the original correct answer text.
+       - Identifies the 3 distractors and randomizes their order.
+       - Places the correct answer at its assigned target index.
+       - Fills the remaining 3 positions with the distractors.
+       - Updates the question's options list while preserving correct_answer reference.
+    """
+    if not payload.gauntlet:
+        return payload
+
+    sequence = generate_bounded_placement_sequence(
+        length=len(payload.gauntlet),
+        num_options=4,
+        max_consecutive=MAX_CONSECUTIVE_POSITION_LIMIT,
+        max_total=MAX_TOTAL_POSITION_LIMIT,
+    )
+
+    for question, target_index in zip(payload.gauntlet, sequence):
+        correct_text = question.correct_answer
+        distractors = [opt for opt in question.options if opt != correct_text]
+        random.shuffle(distractors)
+
+        new_options = (
+            distractors[:target_index] + [correct_text] + distractors[target_index:]
+        )
+        question.options = new_options
+        question.correct_answer = correct_text
+
     return payload
 
 
@@ -412,9 +559,10 @@ Topic Diversity:
 - Avoid repeatedly generating questions from only one subdomain.
 
 Option Length Balance:
-- All four options must have identical or highly similar character lengths wherever practical.
+- Options must be grammatically correct and spelled naturally. DO NOT misspell, truncate (e.g., changing 'electron' to 'electrn'), or artificially extend (e.g., 'redish' instead of 'red') words just to make lengths match. Maintain a natural, reasonable balance in length so the correct answer is not obviously longer or more detailed than the distractors, but strictly prioritize correct spelling and factual accuracy over exact character counts.
 - The correct answer must never be noticeably longer or more descriptive than the incorrect options.
 - Avoid obvious answer-length clues.
+- Ensure incorrect options remain plausible and relevant distractors. Do not sacrifice grammatical correctness or factual accuracy to achieve similar option lengths.
 
 Question Quality:
 - Generate exactly 20 unique multiple-choice questions.
@@ -494,7 +642,8 @@ def load_fallback_gauntlet() -> GauntletPayload:
 
     try:
         raw = json.loads(FALLBACK_PATH.read_text(encoding="utf-8"))
-        return validate_gauntlet_payload(raw)
+        payload = validate_gauntlet_payload(raw)
+        return shuffle_question_options(payload)
     except HTTPException:
         raise
     except (OSError, json.JSONDecodeError, ValidationError, ValueError) as exc:
