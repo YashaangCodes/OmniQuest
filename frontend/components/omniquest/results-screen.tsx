@@ -1,7 +1,19 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Check, Clock, Flame, Hexagon, RotateCcw, Share2, ShieldAlert, Target, Trophy, X } from 'lucide-react'
+import {
+  Check,
+  Clock,
+  Flag,
+  Flame,
+  Hexagon,
+  RotateCcw,
+  Share2,
+  ShieldAlert,
+  Target,
+  Trophy,
+  X,
+} from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AnswerRecord, TierElimination } from '@/lib/quiz-data'
 
@@ -10,6 +22,7 @@ interface ResultsScreenProps {
   answers: AnswerRecord[]
   totalStages?: number
   elimination?: TierElimination | null
+  isForfeit?: boolean
   onPlayAgain: () => void
 }
 
@@ -28,6 +41,7 @@ export function ResultsScreen({
   answers,
   totalStages,
   elimination,
+  isForfeit = false,
   onPlayAgain,
 }: ResultsScreenProps) {
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'error'>('idle')
@@ -48,10 +62,12 @@ export function ResultsScreen({
     : 0
   const bestStreak = getBestStreak(answers)
   const isEliminated = Boolean(elimination)
-  const isVictory = !isEliminated && accuracy >= 60
+  const isVictory = !isEliminated && !isForfeit && accuracy >= 60
 
   async function handleShare() {
-    const shareText = `I scored ${totalPoints} IP on OmniQuest (${topic}) — ${correctCount}/${answers.length} correct!`
+    const shareText = isForfeit
+      ? `I scored ${totalPoints} IP on OmniQuest (${topic}) before forfeiting — ${correctCount}/${answers.length} correct!`
+      : `I scored ${totalPoints} IP on OmniQuest (${topic}) — ${correctCount}/${answers.length} correct!`
     try {
       if (navigator.share) {
         await navigator.share({ title: 'OmniQuest Score', text: shareText })
@@ -72,7 +88,7 @@ export function ResultsScreen({
         <header className="flex flex-col items-center text-center">
           <div className="flex items-center gap-2 text-muted-foreground">
             <Hexagon className="size-5 text-primary" aria-hidden="true" />
-            <span className="font-bold text-foreground">OmniQuest v0</span>
+            <span className="font-bold text-foreground">OmniQuest v0.5</span>
             <span aria-hidden="true">·</span>
             <span className="font-mono text-xs uppercase tracking-widest">Post-Game Analytics</span>
           </div>
@@ -80,21 +96,38 @@ export function ResultsScreen({
           <div
             className={cn(
               'mt-8 flex size-20 items-center justify-center rounded-2xl border-2',
-              isEliminated
-                ? 'border-destructive/60 bg-destructive/15 text-destructive shadow-[0_0_48px_-8px_var(--destructive)]'
-                : isVictory
-                  ? 'border-tier-1/60 bg-tier-1/15 text-tier-1 shadow-[0_0_48px_-8px_var(--tier-1)]'
-                  : 'border-destructive/60 bg-destructive/15 text-destructive shadow-[0_0_48px_-8px_var(--destructive)]',
+              isForfeit
+                ? 'border-amber-500/60 bg-amber-500/15 text-amber-400 shadow-[0_0_48px_-8px_rgba(245,158,11,0.5)]'
+                : isEliminated
+                  ? 'border-destructive/60 bg-destructive/15 text-destructive shadow-[0_0_48px_-8px_var(--destructive)]'
+                  : isVictory
+                    ? 'border-tier-1/60 bg-tier-1/15 text-tier-1 shadow-[0_0_48px_-8px_var(--tier-1)]'
+                    : 'border-destructive/60 bg-destructive/15 text-destructive shadow-[0_0_48px_-8px_var(--destructive)]',
             )}
           >
-            {isVictory ? (
+            {isForfeit ? (
+              <Flag className="size-10" aria-hidden="true" />
+            ) : isVictory ? (
               <Trophy className="size-10" aria-hidden="true" />
             ) : (
               <ShieldAlert className="size-10" aria-hidden="true" />
             )}
           </div>
 
-          {isEliminated && elimination ? (
+          {isForfeit ? (
+            <>
+              <h1 className="mt-6 text-balance text-3xl font-bold tracking-tight text-amber-400 md:text-5xl">
+                Run Forfeited
+              </h1>
+              <p className="mt-3 text-base text-muted-foreground">
+                You voluntarily forfeited this run. All accumulated Insight Points and analytics have
+                been preserved.
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Topic: <span className="font-medium text-foreground">{topic}</span>
+              </p>
+            </>
+          ) : isEliminated && elimination ? (
             <>
               <h1 className="mt-6 text-balance text-3xl font-bold tracking-tight text-destructive md:text-5xl">
                 Eliminated in Tier {elimination.tier}
@@ -135,8 +168,15 @@ export function ResultsScreen({
             </p>
           </div>
 
-          <p className="mt-4 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 font-mono text-xs uppercase tracking-widest text-primary">
-            {answers.length} of {totalStagesCount} stages completed
+          <p
+            className={cn(
+              'mt-4 rounded-full border px-3 py-1 font-mono text-xs uppercase tracking-widest',
+              isForfeit
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                : 'border-primary/40 bg-primary/10 text-primary',
+            )}
+          >
+            {answers.length} of {totalStagesCount} stages completed{isForfeit ? ' (Forfeited)' : ''}
           </p>
         </header>
 
@@ -154,56 +194,62 @@ export function ResultsScreen({
           >
             Stage breakdown
           </h2>
-          <ol className="flex flex-col gap-2">
-            {answers.map((answer) => (
-              <li
-                key={answer.questionId}
-                className="flex items-start gap-4 rounded-xl border border-border bg-card p-4"
-              >
-                <span
-                  className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
-                    answer.isCorrect ? 'bg-tier-1/15 text-tier-1' : 'bg-destructive/15 text-destructive',
-                  )}
+          {answers.length === 0 ? (
+            <p className="rounded-xl border border-border bg-card p-4 text-center text-sm text-muted-foreground">
+              No stages were completed in this run.
+            </p>
+          ) : (
+            <ol className="flex flex-col gap-2">
+              {answers.map((answer) => (
+                <li
+                  key={answer.questionId}
+                  className="flex items-start gap-4 rounded-xl border border-border bg-card p-4"
                 >
-                  {answer.isCorrect ? (
-                    <Check className="size-5" aria-label="Correct" />
-                  ) : (
-                    <X className="size-5" aria-label="Incorrect" />
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-xs text-muted-foreground">Stage {answer.stage}</p>
-                  <p className="text-pretty font-medium">{answer.prompt}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Your answer:{' '}
-                    <span className={answer.isCorrect ? 'text-tier-1' : 'text-destructive'}>
-                      {answer.selectedAnswer ?? 'No answer (time ran out)'}
-                    </span>
-                    {!answer.isCorrect && (
-                      <>
-                        {' · '}Correct: <span className="text-tier-1">{answer.correctAnswer}</span>
-                      </>
+                  <span
+                    className={cn(
+                      'flex size-9 shrink-0 items-center justify-center rounded-lg',
+                      answer.isCorrect ? 'bg-tier-1/15 text-tier-1' : 'bg-destructive/15 text-destructive',
                     )}
-                  </p>
-                  {answer.explanation && (
-                    <p className="mt-1.5 text-xs text-muted-foreground/80">
-                      <span className="font-semibold text-foreground/80">Explanation: </span>
-                      {answer.explanation}
+                  >
+                    {answer.isCorrect ? (
+                      <Check className="size-5" aria-label="Correct" />
+                    ) : (
+                      <X className="size-5" aria-label="Incorrect" />
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-xs text-muted-foreground">Stage {answer.stage}</p>
+                    <p className="text-pretty font-medium">{answer.prompt}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Your answer:{' '}
+                      <span className={answer.isCorrect ? 'text-tier-1' : 'text-destructive'}>
+                        {answer.selectedAnswer ?? 'No answer (time ran out)'}
+                      </span>
+                      {!answer.isCorrect && (
+                        <>
+                          {' · '}Correct: <span className="text-tier-1">{answer.correctAnswer}</span>
+                        </>
+                      )}
                     </p>
-                  )}
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="font-mono text-sm font-bold tabular-nums text-primary">
-                    +{answer.pointsEarned}
-                  </p>
-                  <p className="font-mono text-xs tabular-nums text-muted-foreground">
-                    {(answer.responseTimeMs / 1000).toFixed(1)}s
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
+                    {answer.explanation && (
+                      <p className="mt-1.5 text-xs text-muted-foreground/80">
+                        <span className="font-semibold text-foreground/80">Explanation: </span>
+                        {answer.explanation}
+                      </p>
+                    )}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="font-mono text-sm font-bold tabular-nums text-primary">
+                      +{answer.pointsEarned}
+                    </p>
+                    <p className="font-mono text-xs tabular-nums text-muted-foreground">
+                      {(answer.responseTimeMs / 1000).toFixed(1)}s
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          )}
         </section>
 
         <div className="mt-10 flex flex-col gap-4 sm:flex-row">

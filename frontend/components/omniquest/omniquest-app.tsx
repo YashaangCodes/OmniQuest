@@ -21,6 +21,7 @@ type Screen =
       answers: AnswerRecord[]
       totalStages: number
       elimination?: TierElimination | null
+      isForfeit?: boolean
     }
 
 export function OmniQuestApp() {
@@ -33,13 +34,14 @@ export function OmniQuestApp() {
         topic={screen.topic}
         gauntlet={screen.gauntlet}
         fallbackMessage={screen.fallbackMessage}
-        onComplete={(answers, elimination) =>
+        onComplete={(answers, elimination, isForfeit) =>
           setScreen({
             name: 'results',
             topic: screen.topic,
             answers,
             totalStages: screen.gauntlet.length,
             elimination,
+            isForfeit,
           })
         }
       />
@@ -53,6 +55,7 @@ export function OmniQuestApp() {
         answers={screen.answers}
         totalStages={screen.totalStages}
         elimination={screen.elimination}
+        isForfeit={screen.isForfeit}
         onPlayAgain={() => setScreen({ name: 'setup' })}
       />
     )

@@ -23,20 +23,20 @@ export function StageLadder({ currentStage, answers, gauntlet }: StageLadderProp
   return (
     <aside
       aria-label="Stage ladder"
-      className="hidden w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:sticky lg:top-0 lg:flex lg:h-dvh"
+      className="hidden w-60 xl:w-64 shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex lg:h-full lg:max-h-dvh overflow-hidden"
     >
-      <div className="flex items-center gap-2 border-b border-sidebar-border px-5 py-4">
+      <div className="flex items-center gap-2 border-b border-sidebar-border px-5 py-4 shrink-0">
         <Hexagon className="size-5 text-primary" aria-hidden="true" />
-        <span className="font-bold tracking-tight">OmniQuest v0</span>
+        <span className="font-bold tracking-tight">OmniQuest v0.5</span>
       </div>
 
-      <div className="px-5 pt-4">
+      <div className="px-5 pt-3 shrink-0">
         <p className="rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-center font-mono text-[11px] uppercase tracking-widest text-primary">
           Gauntlet · {gauntlet.length} stages
         </p>
       </div>
 
-      <ol className="flex flex-1 flex-col gap-2 overflow-y-auto px-5 py-3">
+      <ol className="flex flex-1 flex-col gap-2 overflow-y-auto px-5 py-3 min-h-0">
         {activeTiers.map((tier) => {
           const questionsForTier = gauntlet
             .filter((q) => q.tier === tier)
@@ -118,17 +118,14 @@ export function StageLadderCompact({ currentStage, answers, gauntlet }: StageLad
   const sortedGauntletDescending = [...gauntlet].sort((a, b) => b.stage - a.stage)
 
   return (
-    <div className="border-b border-border bg-sidebar px-4 py-3 lg:hidden">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Hexagon className="size-4 text-primary" aria-hidden="true" />
-          <span className="text-sm font-bold">OmniQuest v0</span>
-        </div>
-        <span className={cn('font-mono text-xs uppercase tracking-widest', styles.text)}>
-          Stage {currentStage} / {totalStages} · {styles.label}
+    <div className="border-b border-border bg-sidebar/90 px-3 py-1.5 backdrop-blur-sm lg:hidden">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-semibold text-foreground">Stage Progress</span>
+        <span className={cn('font-mono text-[11px] font-bold uppercase tracking-wider', styles.text)}>
+          Stage {currentStage} / {totalStages} ({styles.label})
         </span>
       </div>
-      <ol aria-label={`Stage ladder, ${totalStages} down to 1`} className="mt-3 flex gap-1">
+      <ol aria-label={`Stage ladder, ${totalStages} down to 1`} className="mt-1.5 flex gap-1">
         {sortedGauntletDescending.map((q) => {
           const stageStyles = TIER_STYLES[q.tier as Tier] || TIER_STYLES[1]
           const answer = answers.find((a) => a.stage === q.stage)
@@ -139,7 +136,7 @@ export function StageLadderCompact({ currentStage, answers, gauntlet }: StageLad
               aria-current={isCurrent ? 'step' : undefined}
               aria-label={`Stage ${q.stage}`}
               className={cn(
-                'h-2 flex-1 rounded-full',
+                'h-1.5 flex-1 rounded-full transition-all',
                 isCurrent
                   ? cn(stageStyles.bg, stageStyles.glow)
                   : answer
@@ -152,11 +149,6 @@ export function StageLadderCompact({ currentStage, answers, gauntlet }: StageLad
           )
         })}
       </ol>
-      <div className="mt-1 flex justify-between font-mono text-[10px] text-muted-foreground">
-        <span>{totalStages}</span>
-        <span>Gauntlet Progress</span>
-        <span>1</span>
-      </div>
     </div>
   )
 }

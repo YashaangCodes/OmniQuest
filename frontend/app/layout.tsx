@@ -14,7 +14,7 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'OmniQuest — Master Any Topic',
+  title: 'OmniQuest v0.5 — Master Any Topic',
   description:
     'OmniQuest is a gamified learning gauntlet. Pick a topic, climb the 20-stage ladder, and earn Insight Points.',
   generator: 'v0.app',

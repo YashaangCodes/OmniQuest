@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Trophy } from 'lucide-react'
+import { AlertTriangle, Flag, Trophy, X } from 'lucide-react'
 import {
   TIER_TARGET_IP,
   getQuestionTier,
@@ -21,7 +21,11 @@ interface GameplayArenaProps {
   topic: string
   gauntlet: PublicQuestion[]
   fallbackMessage?: string
-  onComplete: (answers: AnswerRecord[], elimination?: TierElimination | null) => void
+  onComplete: (
+    answers: AnswerRecord[],
+    elimination?: TierElimination | null,
+    isForfeit?: boolean,
+  ) => void
 }
 
 export function GameplayArena({
@@ -42,6 +46,7 @@ export function GameplayArena({
     tier: Tier
     earnedIp: number
   } | null>(null)
+  const [isForfeitDialogOpen, setIsForfeitDialogOpen] = useState(false)
   const tierClearedTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -51,6 +56,17 @@ export function GameplayArena({
       }
     }
   }, [])
+
+  // Close forfeit modal on Escape key
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape' && isForfeitDialogOpen) {
+        setIsForfeitDialogOpen(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isForfeitDialogOpen])
 
   const question = gauntlet[questionIndex]
   const currentStage = question.stage
@@ -98,21 +114,33 @@ export function GameplayArena({
     setQuestionIndex((index) => index + 1)
   }
 
+  function handleConfirmForfeit() {
+    setIsForfeitDialogOpen(false)
+    // End active run immediately, preserving accumulated answers and score without modifications
+    onComplete(answers, null, true)
+  }
+
   return (
-    <div className="flex min-h-dvh flex-col lg:flex-row">
+    <div className="flex h-dvh max-h-dvh w-full flex-col overflow-hidden bg-background lg:flex-row">
+      {/* Desktop Stage Ladder Sidebar */}
       <StageLadder currentStage={currentStage} answers={answers} gauntlet={gauntlet} />
 
-      <main className="bg-grid flex flex-1 flex-col">
+      {/* Main Viewport Content Area */}
+      <main className="bg-grid relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">
         {fallbackMessage && (
           <aside
             aria-label="Fallback notification"
-            className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-center text-xs font-mono text-amber-300"
+            className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-center text-xs font-mono text-amber-300"
           >
             <AlertTriangle className="size-4 shrink-0 text-amber-400" aria-hidden="true" />
             <span>{fallbackMessage}</span>
           </aside>
         )}
+
+        {/* Compact Mobile Ladder */}
         <StageLadderCompact currentStage={currentStage} answers={answers} gauntlet={gauntlet} />
+
+        {/* Question Round takes remaining space without page-level scrolling */}
         <QuestionRound
           key={`${sessionId}-stage-${question.stage}`}
           sessionId={sessionId}
@@ -127,9 +155,12 @@ export function GameplayArena({
           usedPowerUps={usedPowerUps}
           onUsePowerUp={(id) => setUsedPowerUps((used) => ({ ...used, [id]: true }))}
           onComplete={handleRoundComplete}
+          onForfeit={() => setIsForfeitDialogOpen(true)}
+          isForfeitDialogOpen={isForfeitDialogOpen}
         />
       </main>
 
+      {/* Tier Cleared Modal Dialog */}
       {tierClearedInfo && (
         <aside
           role="dialog"
@@ -160,6 +191,61 @@ export function GameplayArena({
             </div>
           </div>
         </aside>
+      )}
+
+      {/* Forfeit Confirmation Modal */}
+      {isForfeitDialogOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="forfeit-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-md animate-in fade-in duration-150"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setIsForfeitDialogOpen(false)
+          }}
+        >
+          <div className="relative flex w-full max-w-md flex-col rounded-2xl border border-border bg-card p-6 shadow-2xl md:p-8">
+            <div className="flex items-start justify-between">
+              <div className="flex size-12 items-center justify-center rounded-xl border border-destructive/50 bg-destructive/15 text-destructive shadow-[0_0_24px_-4px_var(--destructive)]">
+                <Flag className="size-6" aria-hidden="true" />
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsForfeitDialogOpen(false)}
+                className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                aria-label="Cancel forfeit"
+              >
+                <X className="size-5" aria-hidden="true" />
+              </button>
+            </div>
+
+            <h2 id="forfeit-title" className="mt-4 text-2xl font-bold tracking-tight text-foreground">
+              Forfeit Active Run?
+            </h2>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              Are you sure you want to forfeit this run? Your current run will end immediately.
+              Your accumulated <span className="font-semibold text-primary">{score} Insight Points</span> and
+              all completed stage stats will be preserved in your post-game analytics.
+            </p>
+
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <button
+                type="button"
+                onClick={() => setIsForfeitDialogOpen(false)}
+                className="flex-1 rounded-xl border border-border bg-secondary px-4 py-2.5 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-secondary/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Resume Run
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmForfeit}
+                className="flex-1 rounded-xl bg-destructive px-4 py-2.5 text-sm font-semibold text-destructive-foreground shadow-[0_4px_0_0_var(--destructive-edge)] transition-all hover:opacity-95 active:translate-y-1 active:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+              >
+                Yes, Forfeit Run
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
