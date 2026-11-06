@@ -1,5 +1,7 @@
 # ⚡ OmniQuest v0.5
 
+**Play the live demo:** [https://omniquest-ai.vercel.app](https://omniquest-ai.vercel.app)
+
 OmniQuest is an AI-powered, adaptive multiple-choice gauntlet that generates a 20-stage learning ladder on absolutely any topic you type. 
 
 Version 0.5 represents a major architectural upgrade from the initial v0 MVP, focusing heavily on gameplay fairness, UI/UX polish, and robust API security.
