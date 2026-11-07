@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import random
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -30,9 +31,12 @@ from game_logic import (
     ALLOWED_QUESTION_COUNTS,
     BASE_IP_PER_QUESTION,
     DEFAULT_QUESTION_COUNT,
+    ForfeitGameRequest,
+    ForfeitGameResponse,
     GauntletPayload,
     GenerateGameRequest,
     GenerateGameResponse,
+    POWER_UP_LIMITS,
     PublicQuestion,
     Question,
     STREAK_FIRE_BONUS_IP,
@@ -95,33 +99,59 @@ FALLBACK_PATH = Path(__file__).with_name("fallback_gauntlet.json")
 EXPECTED_GAUNTLET_LENGTH = DEFAULT_QUESTION_COUNT
 logger = logging.getLogger(__name__)
 
-# In-memory session store
+# In-memory session store and per-session synchronization locks
 sessions: dict[str, dict[str, Any]] = {}
+session_locks: dict[str, threading.Lock] = {}
+sessions_meta_lock = threading.Lock()
 
 
-def store_session(payload: GauntletPayload) -> str:
-    """Save the full gauntlet securely and initialize streak & power-up tracking."""
+def get_session_lock(session_id: str) -> threading.Lock:
+    """Thread-safe retrieval or initialization of a per-session lock."""
+    with sessions_meta_lock:
+        if session_id not in session_locks:
+            session_locks[session_id] = threading.Lock()
+        return session_locks[session_id]
+
+
+def store_session(payload: GauntletPayload, difficulty: str = "Medium") -> str:
+    """Save the full gauntlet securely and initialize streak & difficulty-based power-up tracking."""
     session_id = str(uuid.uuid4())
+    norm_difficulty = difficulty.strip().capitalize() if isinstance(difficulty, str) else "Medium"
+    if norm_difficulty not in POWER_UP_LIMITS:
+        norm_difficulty = "Medium"
+    limits = POWER_UP_LIMITS[norm_difficulty]
+
     sessions[session_id] = {
         "topic": payload.topic,
+        "difficulty": norm_difficulty,
+        "power_up_limits": dict(limits),
         "question_count": len(payload.gauntlet),
         "gauntlet": [question.model_dump() for question in payload.gauntlet],
         "current_streak": 0,
         "total_ip_awarded": 0,
+        "is_forfeited": False,
         "answered_stages": set(),
-        "hints": {},        # stage_number -> str
-        "fifty_fifty": {},  # stage_number -> list[str]
-        "submissions": {},  # stage_number -> SubmitAnswerResponse
+        "hints": {},              # stage_number -> str (cached generated hint)
+        "pending_hints": set(),    # stage numbers currently in-flight
+        "fifty_fifty": {},        # stage_number -> list[str] (cached eliminated options)
+        "submissions": {},        # stage_number -> SubmitAnswerResponse
     }
     return session_id
 
 
 def _ensure_session_state(session: dict[str, Any]) -> None:
     """Defensively ensure all tracking sets and dictionaries exist on a session."""
+    if "difficulty" not in session or session["difficulty"] not in POWER_UP_LIMITS:
+        session["difficulty"] = "Medium"
+    if "power_up_limits" not in session:
+        session["power_up_limits"] = dict(POWER_UP_LIMITS[session["difficulty"]])
     session.setdefault("current_streak", 0)
     session.setdefault("total_ip_awarded", 0)
+    session.setdefault("is_forfeited", False)
     if "answered_stages" not in session or not isinstance(session["answered_stages"], set):
         session["answered_stages"] = set(session.get("answered_stages", []))
+    if "pending_hints" not in session or not isinstance(session["pending_hints"], set):
+        session["pending_hints"] = set(session.get("pending_hints", []))
     session.setdefault("hints", {})
     session.setdefault("fifty_fifty", {})
     session.setdefault("submissions", {})
@@ -234,10 +264,12 @@ def generate_game(request: GenerateGameRequest) -> GenerateGameResponse:
         used_fallback = True
 
     total_questions = len(payload.gauntlet)
-    session_id = store_session(payload)
+    session_id = store_session(payload, difficulty=request.difficulty)
     response = GenerateGameResponse(
         session_id=session_id,
         topic=payload.topic,
+        difficulty=request.difficulty,
+        power_up_limits=sessions[session_id]["power_up_limits"],
         question_count=total_questions,
         gauntlet=to_public_questions(payload),
         tier_checkpoints=get_tier_checkpoints(total_questions),
@@ -251,12 +283,11 @@ def generate_game(request: GenerateGameRequest) -> GenerateGameResponse:
     return response
 
 
-@app.post("/use-hint", response_model=UseHintResponse)
-def use_hint(request: UseHintRequest) -> UseHintResponse:
+@app.post("/forfeit-game", response_model=ForfeitGameResponse)
+def forfeit_game(request: ForfeitGameRequest) -> ForfeitGameResponse:
     """
-    Generate a subtle, 1-sentence hint for the player without revealing the correct answer.
-    Caches the generated hint within the session so repeated calls do not trigger additional
-    Gemini requests.
+    Atomically mark a game session as forfeited.
+    Subsequent answer submissions and power-up activations will be rejected.
     """
     session = sessions.get(request.session_id)
     if session is None:
@@ -266,6 +297,36 @@ def use_hint(request: UseHintRequest) -> UseHintResponse:
         )
 
     _ensure_session_state(session)
+    lock = get_session_lock(request.session_id)
+    with lock:
+        session["is_forfeited"] = True
+
+    return ForfeitGameResponse(session_id=request.session_id)
+
+
+@app.post("/use-hint", response_model=UseHintResponse)
+def use_hint(request: UseHintRequest) -> UseHintResponse:
+    """
+    Generate a subtle, 1-sentence hint for the player without revealing the correct answer.
+    Enforces difficulty-based usage limits:
+    - Easy: 2 per run
+    - Medium: 1 per run
+    - Hard: 0 per run
+    - Expert: 0 per run
+
+    Atomically validates quotas and tracks in-flight generation to prevent race conditions.
+    Avoids holding a session lock during external Gemini calls.
+    """
+    session = sessions.get(request.session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Unknown session_id. Generate a game first, or the session may have been lost.",
+        )
+
+    _ensure_session_state(session)
+    lock = get_session_lock(request.session_id)
+
     gauntlet = session.get("gauntlet", [])
     total_stages = len(gauntlet)
 
@@ -275,44 +336,116 @@ def use_hint(request: UseHintRequest) -> UseHintResponse:
             detail=f"Invalid stage_number. Use a value from 1 to {total_stages}.",
         )
 
-    if request.stage_number in session["answered_stages"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Stage {request.stage_number} has already been answered.",
-        )
-
-    # Return cached hint if already requested for this question
-    if request.stage_number in session["hints"]:
-        return UseHintResponse(hint=session["hints"][request.stage_number])
-
-    question = next(
-        (item for item in gauntlet if item.get("stage") == request.stage_number),
-        None,
+    difficulty = session.get("difficulty", "Medium")
+    limits = session.get(
+        "power_up_limits",
+        POWER_UP_LIMITS.get(difficulty, POWER_UP_LIMITS["Medium"]),
     )
-    if question is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Stage {request.stage_number} was not found in this session.",
+    max_hints = limits.get("hint", 0)
+
+    # Phase 1: Atomic validation and reservation under session lock
+    with lock:
+        if session.get("is_forfeited"):
+            raise HTTPException(
+                status_code=400,
+                detail="Game run has been forfeited. Cannot use power-ups on a forfeited game.",
+            )
+
+        if len(session["answered_stages"]) >= total_stages:
+            raise HTTPException(
+                status_code=400,
+                detail="Game run has ended. All stages have been completed.",
+            )
+
+        if request.stage_number in session["answered_stages"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stage {request.stage_number} has already been answered.",
+            )
+
+        # Idempotent retry: Return cached hint if already requested for this question
+        if request.stage_number in session["hints"]:
+            remaining = max(0, max_hints - len(session["hints"]))
+            return UseHintResponse(
+                hint=session["hints"][request.stage_number],
+                remaining_hints=remaining,
+            )
+
+        # Guard against concurrent duplicate for the exact same stage
+        if request.stage_number in session["pending_hints"]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"AI Hint for stage {request.stage_number} is currently being generated. Please wait.",
+            )
+
+        # Reject if hints are not permitted on this difficulty or quota is exhausted
+        if max_hints <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"AI Hint is not available on {difficulty} difficulty.",
+            )
+
+        # Total hint commitments include both completed hints and in-flight reservations
+        total_committed_hints = len(session["hints"]) + len(session["pending_hints"])
+        if total_committed_hints >= max_hints:
+            raise HTTPException(
+                status_code=400,
+                detail=f"AI Hint limit exhausted for this run ({max_hints} allowed on {difficulty}).",
+            )
+
+        question = next(
+            (item for item in gauntlet if item.get("stage") == request.stage_number),
+            None,
         )
+        if question is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stage {request.stage_number} was not found in this session.",
+            )
 
-    hint = generate_hint_with_gemini(
-        topic=session.get("topic", "Educational Gauntlet"),
-        question=question["question"],
-        options=question["options"],
-        correct_answer=question["correct_answer"],
-        explanation=question.get("explanation", ""),
-    )
+        # Atomically reserve the stage
+        session["pending_hints"].add(request.stage_number)
 
-    session["hints"][request.stage_number] = hint
-    return UseHintResponse(hint=hint)
+    # Phase 2: External Gemini call occurs OUTSIDE the session lock
+    try:
+        hint = generate_hint_with_gemini(
+            topic=session.get("topic", "Educational Gauntlet"),
+            question=question["question"],
+            options=question["options"],
+            correct_answer=question["correct_answer"],
+            explanation=question.get("explanation", ""),
+        )
+    except Exception as exc:
+        # Roll back reservation atomically
+        with lock:
+            session["pending_hints"].discard(request.stage_number)
+        logger.exception("Hint generation failed for stage %s", request.stage_number)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to generate hint at this time: {exc}",
+        ) from exc
+
+    # Phase 3: Finalize cache and clear in-flight reservation under lock
+    with lock:
+        session["pending_hints"].discard(request.stage_number)
+        session["hints"][request.stage_number] = hint
+        remaining = max(0, max_hints - len(session["hints"]))
+
+    return UseHintResponse(hint=hint, remaining_hints=remaining)
 
 
 @app.post("/use-50-50", response_model=UseFiftyFiftyResponse)
 def use_fifty_fifty(request: UseFiftyFiftyRequest) -> UseFiftyFiftyResponse:
     """
     Eliminate exactly two incorrect options for the given stage.
-    Never eliminates the correct answer. Caches the elimination so repeated
-    requests on the same question return the identical options to remove.
+    Never eliminates the correct answer.
+    Enforces difficulty-based usage limits:
+    - Easy: 2 per run
+    - Medium: 1 per run
+    - Hard: 0 per run
+    - Expert: 0 per run
+    Caches the elimination so repeated requests on the same question return the identical
+    options to remove without consuming extra charges.
     """
     session = sessions.get(request.session_id)
     if session is None:
@@ -322,6 +455,8 @@ def use_fifty_fifty(request: UseFiftyFiftyRequest) -> UseFiftyFiftyResponse:
         )
 
     _ensure_session_state(session)
+    lock = get_session_lock(request.session_id)
+
     gauntlet = session.get("gauntlet", [])
     total_stages = len(gauntlet)
 
@@ -331,41 +466,80 @@ def use_fifty_fifty(request: UseFiftyFiftyRequest) -> UseFiftyFiftyResponse:
             detail=f"Invalid stage_number. Use a value from 1 to {total_stages}.",
         )
 
-    if request.stage_number in session["answered_stages"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Stage {request.stage_number} has already been answered.",
-        )
-
-    # Return cached elimination if already used for this question
-    if request.stage_number in session["fifty_fifty"]:
-        return UseFiftyFiftyResponse(
-            options_to_remove=session["fifty_fifty"][request.stage_number]
-        )
-
-    question = next(
-        (item for item in gauntlet if item.get("stage") == request.stage_number),
-        None,
+    difficulty = session.get("difficulty", "Medium")
+    limits = session.get(
+        "power_up_limits",
+        POWER_UP_LIMITS.get(difficulty, POWER_UP_LIMITS["Medium"]),
     )
-    if question is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Stage {request.stage_number} was not found in this session.",
+    max_fifty = limits.get("fifty_fifty", 0)
+
+    with lock:
+        if session.get("is_forfeited"):
+            raise HTTPException(
+                status_code=400,
+                detail="Game run has been forfeited. Cannot use power-ups on a forfeited game.",
+            )
+
+        if len(session["answered_stages"]) >= total_stages:
+            raise HTTPException(
+                status_code=400,
+                detail="Game run has ended. All stages have been completed.",
+            )
+
+        if request.stage_number in session["answered_stages"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stage {request.stage_number} has already been answered.",
+            )
+
+        # Return cached elimination if already used for this question (does not consume extra charge)
+        if request.stage_number in session["fifty_fifty"]:
+            remaining = max(0, max_fifty - len(session["fifty_fifty"]))
+            return UseFiftyFiftyResponse(
+                options_to_remove=session["fifty_fifty"][request.stage_number],
+                remaining_fifty_fifty=remaining,
+            )
+
+        # Reject if 50/50 is not permitted on this difficulty or quota is exhausted
+        if max_fifty <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"50/50 is not available on {difficulty} difficulty.",
+            )
+
+        if len(session["fifty_fifty"]) >= max_fifty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"50/50 limit exhausted for this run ({max_fifty} allowed on {difficulty}).",
+            )
+
+        question = next(
+            (item for item in gauntlet if item.get("stage") == request.stage_number),
+            None,
         )
+        if question is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stage {request.stage_number} was not found in this session.",
+            )
 
-    correct_answer = question["correct_answer"]
-    options = question["options"]
-    incorrect_options = [opt for opt in options if opt != correct_answer]
+        correct_answer = question["correct_answer"]
+        options = question["options"]
+        incorrect_options = [opt for opt in options if opt != correct_answer]
 
-    if len(incorrect_options) < 2:
-        raise HTTPException(
-            status_code=500,
-            detail="Not enough incorrect options available to eliminate.",
+        if len(incorrect_options) < 2:
+            raise HTTPException(
+                status_code=500,
+                detail="Not enough incorrect options available to eliminate.",
+            )
+
+        options_to_remove = random.sample(incorrect_options, 2)
+        session["fifty_fifty"][request.stage_number] = options_to_remove
+        remaining = max(0, max_fifty - len(session["fifty_fifty"]))
+        return UseFiftyFiftyResponse(
+            options_to_remove=options_to_remove,
+            remaining_fifty_fifty=remaining,
         )
-
-    options_to_remove = random.sample(incorrect_options, 2)
-    session["fifty_fifty"][request.stage_number] = options_to_remove
-    return UseFiftyFiftyResponse(options_to_remove=options_to_remove)
 
 
 @app.post("/submit-answer", response_model=SubmitAnswerResponse)
@@ -383,6 +557,8 @@ def submit_answer(request: SubmitAnswerRequest) -> SubmitAnswerResponse:
         )
 
     _ensure_session_state(session)
+    lock = get_session_lock(request.session_id)
+
     gauntlet = session.get("gauntlet", [])
     total_stages = len(gauntlet)
 
@@ -392,55 +568,62 @@ def submit_answer(request: SubmitAnswerRequest) -> SubmitAnswerResponse:
             detail=f"Invalid stage_number. Use a value from 1 to {total_stages}.",
         )
 
-    # Duplicate submission protection: if already answered, return cached response
-    if request.stage_number in session["answered_stages"]:
-        cached = session["submissions"].get(request.stage_number)
-        if cached is not None:
-            return cached
+    with lock:
+        if session.get("is_forfeited"):
+            raise HTTPException(
+                status_code=400,
+                detail="Game run has been forfeited. Cannot submit answers on a forfeited game.",
+            )
 
-    question: dict[str, Any] | None = next(
-        (
-            item
-            for item in gauntlet
-            if item.get("stage") == request.stage_number
-        ),
-        None,
-    )
-    if question is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Stage {request.stage_number} was not found in this session.",
+        # Duplicate submission protection: if already answered, return cached response
+        if request.stage_number in session["answered_stages"]:
+            cached = session["submissions"].get(request.stage_number)
+            if cached is not None:
+                return cached
+
+        question: dict[str, Any] | None = next(
+            (
+                item
+                for item in gauntlet
+                if item.get("stage") == request.stage_number
+            ),
+            None,
+        )
+        if question is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Stage {request.stage_number} was not found in this session.",
+            )
+
+        correct_answer = question["correct_answer"]
+        is_correct = request.selected_option == correct_answer
+
+        session["answered_stages"].add(request.stage_number)
+
+        if is_correct:
+            session["current_streak"] += 1
+            current_streak = session["current_streak"]
+            streak_fire_active = current_streak >= STREAK_FIRE_THRESHOLD
+            base_ip = BASE_IP_PER_QUESTION
+            bonus_ip = STREAK_FIRE_BONUS_IP if streak_fire_active else 0
+            session["total_ip_awarded"] += base_ip + bonus_ip
+        else:
+            session["current_streak"] = 0
+            current_streak = 0
+            streak_fire_active = False
+            base_ip = 0
+            bonus_ip = 0
+
+        response = SubmitAnswerResponse(
+            is_correct=is_correct,
+            correct_answer=correct_answer,
+            explanation=question["explanation"],
+            current_streak=current_streak,
+            streak_fire_active=streak_fire_active,
+            base_ip_awarded=base_ip,
+            bonus_ip_awarded=bonus_ip,
+            total_ip_awarded=session["total_ip_awarded"],
         )
 
-    correct_answer = question["correct_answer"]
-    is_correct = request.selected_option == correct_answer
-
-    session["answered_stages"].add(request.stage_number)
-
-    if is_correct:
-        session["current_streak"] += 1
-        current_streak = session["current_streak"]
-        streak_fire_active = current_streak >= STREAK_FIRE_THRESHOLD
-        base_ip = BASE_IP_PER_QUESTION
-        bonus_ip = STREAK_FIRE_BONUS_IP if streak_fire_active else 0
-        session["total_ip_awarded"] += base_ip + bonus_ip
-    else:
-        session["current_streak"] = 0
-        current_streak = 0
-        streak_fire_active = False
-        base_ip = 0
-        bonus_ip = 0
-
-    response = SubmitAnswerResponse(
-        is_correct=is_correct,
-        correct_answer=correct_answer,
-        explanation=question["explanation"],
-        current_streak=current_streak,
-        streak_fire_active=streak_fire_active,
-        base_ip_awarded=base_ip,
-        bonus_ip_awarded=bonus_ip,
-        total_ip_awarded=session["total_ip_awarded"],
-    )
-
-    session["submissions"][request.stage_number] = response
-    return response
+        session["submissions"][request.stage_number] = response
+        return response

@@ -2,6 +2,24 @@ export type Tier = 1 | 2 | 3 | 4
 
 export type PowerUpId = 'hint' | 'freeze' | 'fiftyFifty'
 
+export type Difficulty = 'Easy' | 'Medium' | 'Hard' | 'Expert'
+
+export const POWER_UP_LIMITS_BY_DIFFICULTY: Record<
+  Difficulty,
+  Record<PowerUpId, number>
+> = {
+  Easy: { hint: 2, fiftyFifty: 2, freeze: 2 },
+  Medium: { hint: 1, fiftyFifty: 1, freeze: 2 },
+  Hard: { hint: 0, fiftyFifty: 0, freeze: 2 },
+  Expert: { hint: 0, fiftyFifty: 0, freeze: 0 },
+}
+
+export function getPowerUpLimits(difficulty: string = 'Medium'): Record<PowerUpId, number> {
+  const trimmed = (difficulty || 'Medium').trim()
+  const normalized = (trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()) as Difficulty
+  return POWER_UP_LIMITS_BY_DIFFICULTY[normalized] || POWER_UP_LIMITS_BY_DIFFICULTY.Medium
+}
+
 import type { PublicQuestion } from './api'
 
 export type {
@@ -117,8 +135,8 @@ export function getTierEarnedIP(
     .reduce((sum, a) => sum + a.pointsEarned, 0)
 }
 
-export function isTierGateStage(stage: number): boolean {
-  return stage === 5 || stage === 10 || stage === 15
+export function isTierGateStage(stage: number, totalStages: number = 20): boolean {
+  return (stage === 5 || stage === 10 || stage === 15) && stage < totalStages
 }
 
 export const TIER_STYLES: Record<

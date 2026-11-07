@@ -3,18 +3,29 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
+  ArrowRight,
   BookOpen,
+  Brain,
+  Check,
+  CircleHelp,
   Clock,
-  Hexagon,
-  Layers,
+  Flame,
   Loader2,
+  Play,
+  ShieldCheck,
   Sparkles,
-  Trophy,
+  Target,
+  Upload,
   X,
   Zap,
 } from 'lucide-react'
-import { generateGame } from '@/lib/api'
+import { generateGame, uploadDocument } from '@/lib/api'
 import type { PublicQuestion } from '@/lib/quiz-data'
+import { formatDuration, getPlayerStats, type PlayerStats } from '@/lib/game-storage'
+import { HowToPlayModal } from './how-to-play-modal'
+
+export type Difficulty = 'Easy' | 'Medium' | 'Hard' | 'Expert'
+export type GenerationMode = 'strict' | 'enhanced'
 
 const SUGGESTED_TOPICS = ['Data Structures', 'Web Fundamentals', 'Astronomy']
 const SUGGESTED_LEVELS = ['10th Grade', 'Beginner', 'Expert', 'Pop Culture']
@@ -25,18 +36,45 @@ interface SetupScreenProps {
     topic: string
     gauntlet: PublicQuestion[]
     fallbackMessage?: string
+    difficulty: Difficulty
+    totalStages: number
   }) => void
+  onHowTo?: () => void
 }
 
-export function SetupScreen({ onStart }: SetupScreenProps) {
+export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
+  // Clean inputs without arbitrary demo defaults
   const [topic, setTopic] = useState('')
   const [targetLevel, setTargetLevel] = useState('')
+  const [difficulty, setDifficulty] = useState<Difficulty>('Medium')
+  const [mode, setMode] = useState<GenerationMode>('enhanced')
+  const [length, setLength] = useState<number>(20)
+
+  // Real player stats from localStorage
+  const [stats, setStats] = useState<PlayerStats | null>(null)
+
+  // Document upload state
+  const [uploadedFile, setUploadedFile] = useState<{
+    name: string
+    sizeLabel: string
+    text: string
+  } | null>(null)
+  const [isUploadingDoc, setIsUploadingDoc] = useState(false)
+  const [docError, setDocError] = useState<string | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
+
+  // Gauntlet generation state
   const [isLoading, setIsLoading] = useState(false)
   const [showColdStartWarning, setShowColdStartWarning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isHowToPlayOpen, setIsHowToPlayOpen] = useState(false)
 
   const coldStartTimerRef = useRef<number | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    setStats(getPlayerStats())
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -46,35 +84,74 @@ export function SetupScreen({ onStart }: SetupScreenProps) {
     }
   }, [])
 
-  // Close How to Play modal on Escape key press
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && isHowToPlayOpen) {
-        setIsHowToPlayOpen(false)
-      }
+  async function handleFileProcess(file: File) {
+    if (!file) return
+    setIsUploadingDoc(true)
+    setDocError(null)
+
+    try {
+      const response = await uploadDocument(file)
+      const sizeKb = Math.round(file.size / 1024)
+      const sizeLabel = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`
+
+      setUploadedFile({
+        name: response.filename,
+        sizeLabel: `${sizeLabel} · ${response.word_count.toLocaleString()} words`,
+        text: response.text,
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to parse uploaded document.'
+      setDocError(msg)
+    } finally {
+      setIsUploadingDoc(false)
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isHowToPlayOpen])
+  }
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) {
+      handleFileProcess(file)
+    }
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLLabelElement>) {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    if (file) {
+      handleFileProcess(file)
+    }
+  }
 
   const trimmedTopic = topic.trim()
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!trimmedTopic || isLoading) return
+  async function handleSubmit(event?: React.FormEvent) {
+    if (event) event.preventDefault()
+    if (!trimmedTopic || isLoading || isUploadingDoc) return
 
     setIsLoading(true)
     setError(null)
     setShowColdStartWarning(false)
 
-    // Cold-start warning timer: trigger after 5 seconds of loading
+    // Trigger cold-start warning after 5s of waiting
     coldStartTimerRef.current = window.setTimeout(() => {
       setShowColdStartWarning(true)
     }, 5000)
 
     try {
-      const levelToSend = targetLevel.trim() || 'General'
-      const response = await generateGame(trimmedTopic, levelToSend)
+      const baseLevel = targetLevel.trim() || 'General'
+      const combinedLevel = `${baseLevel} - ${difficulty} Level`
+      const generationModeParam =
+        mode === 'strict' && uploadedFile?.text
+          ? 'Strict Material Only'
+          : 'AI Enhanced'
+
+      const response = await generateGame(trimmedTopic, combinedLevel, {
+        question_count: length,
+        difficulty,
+        source_text: uploadedFile?.text || null,
+        generation_mode: generationModeParam,
+      })
 
       if (coldStartTimerRef.current !== null) {
         window.clearTimeout(coldStartTimerRef.current)
@@ -93,6 +170,8 @@ export function SetupScreen({ onStart }: SetupScreenProps) {
         fallbackMessage: response.is_fallback
           ? (response.message ?? 'API unavailable, loaded sample round.')
           : undefined,
+        difficulty,
+        totalStages: response.gauntlet.length,
       })
     } catch (err: unknown) {
       if (coldStartTimerRef.current !== null) {
@@ -111,347 +190,444 @@ export function SetupScreen({ onStart }: SetupScreenProps) {
   }
 
   return (
-    <main className="bg-grid relative flex min-h-dvh items-center justify-center overflow-x-hidden px-4 py-10 md:py-16">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute left-1/2 top-1/2 size-[36rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/10 blur-3xl"
-      />
+    <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+      <div className="mx-auto max-w-[1080px] space-y-5 pb-8">
+        {/* Hero Section */}
+        <section className="hero relative overflow-hidden rounded-2xl border border-[#2c3a63] p-5 sm:p-7 min-h-[210px]">
+          <div className="hero-orbit orbit-one" aria-hidden="true" />
+          <div className="hero-orbit orbit-two" aria-hidden="true" />
 
-      <div className="relative w-full max-w-2xl">
-        <header className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div className="flex items-center gap-2">
-            <Hexagon className="size-8 text-primary" aria-hidden="true" />
-            <span className="text-2xl font-bold tracking-tight">OmniQuest v0.5</span>
-          </div>
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <span className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 font-mono text-xs uppercase tracking-widest text-primary">
-              AI Learning Gauntlet
-            </span>
+          <div className="relative z-10 max-w-[540px]">
+            <div className="mb-3.5 inline-flex items-center gap-2 rounded-full border border-[#5b4cb4]/50 bg-[#392b79]/35 px-3 py-1 text-[10px] font-black tracking-[0.18em] text-[#bfadff]">
+              <Sparkles size={12} /> SEASON 01 · THE AWAKENING
+            </div>
+            <h1 className="max-w-[500px] text-2xl font-black leading-[1.02] tracking-[-0.04em] text-white sm:text-4xl">
+              YOUR KNOWLEDGE.<br />
+              <span className="text-[#75e9ae]">YOUR ARENA.</span>
+            </h1>
+            <p className="mt-3 max-w-[420px] text-xs sm:text-sm leading-relaxed text-[#b5bdd3]">
+              Challenge your limits. Conquer every tier. Earn{' '}
+              <span className="font-bold text-[#e9ad43]">Insight Points</span> with every verified answer.
+            </p>
             <button
               type="button"
-              onClick={() => setIsHowToPlayOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-secondary/80 px-3 py-1 text-xs font-medium text-foreground transition-all hover:border-primary/60 hover:bg-secondary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              onClick={() => handleSubmit()}
+              disabled={isLoading || !trimmedTopic}
+              className="mt-5 primary-button"
             >
-              <BookOpen className="size-3.5" aria-hidden="true" />
-              <span>How to Play</span>
+              <Play size={14} fill="currentColor" /> Enter the arena <ArrowRight size={14} />
             </button>
           </div>
-        </header>
 
-        <form
-          onSubmit={handleSubmit}
-          className="rounded-2xl border border-border bg-card/80 p-6 shadow-2xl backdrop-blur md:p-10"
-        >
-          <label
-            htmlFor="topic"
-            className="block text-balance text-center text-3xl font-bold tracking-tight md:text-4xl"
-          >
-            What do you want to master today?
-          </label>
-          <p className="mt-3 text-pretty text-center text-sm text-muted-foreground md:text-base">
-            Enter a topic and target level to climb the 20-stage gauntlet. Answer fast to earn more
-            Insight Points.
-          </p>
-
-          <div className="mt-8 space-y-6">
-            {/* Topic Input */}
-            <div>
-              <label
-                htmlFor="topic"
-                className="block text-xs font-semibold uppercase tracking-wider text-foreground/90"
-              >
-                Topic <span className="text-destructive">*</span>
-              </label>
-              <input
-                id="topic"
-                type="text"
-                value={topic}
-                onChange={(event) => {
-                  setTopic(event.target.value)
-                  if (error) setError(null)
-                }}
-                maxLength={50}
-                placeholder="e.g. Data Structures, Quantum Computing, Pop Art..."
-                autoComplete="off"
-                disabled={isLoading}
-                className="mt-2 w-full rounded-xl border border-input bg-background/60 px-4 py-3.5 text-base text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 md:text-lg"
-              />
-              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Try topic:</span>
-                {SUGGESTED_TOPICS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => {
-                      setTopic(suggestion)
-                      if (error) setError(null)
-                    }}
-                    disabled={isLoading}
-                    className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs text-secondary-foreground transition-colors hover:border-primary/60 hover:text-primary disabled:opacity-60"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
+          <div className="hero-visual" aria-hidden="true">
+            <div className="neon-ring ring-a" />
+            <div className="neon-ring ring-b" />
+            <div className="brain-shape">
+              <Brain size={100} strokeWidth={1} />
             </div>
-
-            {/* Target Level / Context Input */}
-            <div>
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="target-level"
-                  className="block text-xs font-semibold uppercase tracking-wider text-foreground/90"
-                >
-                  Target Level / Context
-                </label>
-                <span className="text-xs text-muted-foreground">Default: General</span>
-              </div>
-              <input
-                id="target-level"
-                type="text"
-                value={targetLevel}
-                onChange={(event) => {
-                  setTargetLevel(event.target.value)
-                  if (error) setError(null)
-                }}
-                maxLength={50}
-                placeholder="e.g. 10th Grade, Expert, Pop Culture (optional)"
-                autoComplete="off"
-                disabled={isLoading}
-                className="mt-2 w-full rounded-xl border border-input bg-background/60 px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground transition-colors focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60 md:text-base"
-              />
-              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">Examples:</span>
-                {SUGGESTED_LEVELS.map((level) => (
-                  <button
-                    key={level}
-                    type="button"
-                    onClick={() => {
-                      setTargetLevel(level)
-                      if (error) setError(null)
-                    }}
-                    disabled={isLoading}
-                    className="rounded-full border border-border bg-secondary px-2.5 py-0.5 text-xs text-secondary-foreground transition-colors hover:border-primary/60 hover:text-primary disabled:opacity-60"
-                  >
-                    {level}
-                  </button>
-                ))}
-              </div>
+            <div className="float-chip chip-a">
+              <Target size={18} />
+            </div>
+            <div className="float-chip chip-b">
+              <Zap size={16} />
             </div>
           </div>
+        </section>
 
-          {/* Cold Start Warning */}
-          {isLoading && showColdStartWarning && (
-            <div
-              role="status"
-              aria-live="polite"
-              className="mt-6 flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/15 p-4 text-sm text-amber-200 animate-in fade-in"
-            >
-              <Clock className="size-5 shrink-0 text-amber-400 animate-pulse" aria-hidden="true" />
-              <div className="flex-1 text-left">
-                <p className="font-semibold text-amber-300">Server Cold Start</p>
-                <p className="mt-0.5 text-xs text-amber-200/90 leading-relaxed">
-                  Waking up the server... this might take 40-50 seconds on the first run.
+        {/* Configuration Hub & Daily Challenge Grid */}
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_310px]">
+          {/* Main Configuration Panel */}
+          <section className="panel p-5 sm:p-6">
+            <div className="mb-5 flex items-start justify-between">
+              <div>
+                <p className="eyebrow">Configure your run</p>
+                <h2 className="mt-1 text-lg sm:text-xl font-black text-white">Build your knowledge gauntlet</h2>
+              </div>
+              <div className="hidden rounded-lg border border-[#29385e] bg-[#121c38] px-3 py-1.5 text-right sm:block">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-[#73809e]">EST. REWARD</div>
+                <div className="text-xs sm:text-sm font-black text-[#e9ad43]">+{length * 100} IP</div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Topic & Target Level Inputs */}
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="topic-input" className="field-label">
+                    Topic <span className="text-[#f16e8d]">*</span>
+                  </label>
+                  <input
+                    id="topic-input"
+                    value={topic}
+                    onChange={(e) => {
+                      setTopic(e.target.value)
+                      if (error) setError(null)
+                    }}
+                    maxLength={50}
+                    disabled={isLoading}
+                    className="field-input"
+                    placeholder="e.g. Data Structures, Quantum Computing..."
+                  />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] text-[#707c99]">Suggestions:</span>
+                    {SUGGESTED_TOPICS.map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        type="button"
+                        onClick={() => {
+                          setTopic(suggestion)
+                          if (error) setError(null)
+                        }}
+                        disabled={isLoading}
+                        className="rounded-md border border-[#243354] bg-[#111932] px-2 py-0.5 text-[10px] text-[#8e9ab6] transition-colors hover:border-[#8663df] hover:text-white disabled:opacity-50"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="level-input" className="field-label">
+                      Target level / context
+                    </label>
+                    <span className="text-[10px] text-[#697593]">Optional</span>
+                  </div>
+                  <input
+                    id="level-input"
+                    value={targetLevel}
+                    onChange={(e) => {
+                      setTargetLevel(e.target.value)
+                      if (error) setError(null)
+                    }}
+                    maxLength={50}
+                    disabled={isLoading}
+                    className="field-input"
+                    placeholder="e.g. Beginner, 10th Grade, Expert..."
+                  />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] text-[#707c99]">Examples:</span>
+                    {SUGGESTED_LEVELS.map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => {
+                          setTargetLevel(level)
+                          if (error) setError(null)
+                        }}
+                        disabled={isLoading}
+                        className="rounded-md border border-[#243354] bg-[#111932] px-2 py-0.5 text-[10px] text-[#8e9ab6] transition-colors hover:border-[#8663df] hover:text-white disabled:opacity-50"
+                      >
+                        {level}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Difficulty Selector */}
+              <div>
+                <div className="field-label mb-1.5">Difficulty</div>
+                <div className="grid grid-cols-4 gap-2">
+                  {(['Easy', 'Medium', 'Hard', 'Expert'] as Difficulty[]).map((item, i) => (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => setDifficulty(item)}
+                      disabled={isLoading}
+                      className={`choice-button ${difficulty === item ? 'selected' : ''}`}
+                    >
+                      <span className={`difficulty-dot d-${i}`} />
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reference Material Upload */}
+              <div>
+                <div className="field-label mb-1.5 flex items-center justify-between">
+                  <span>Reference material</span>
+                  <span className="font-normal normal-case tracking-normal text-[#697593]">
+                    PDF, DOCX, PPTX, TXT · Max 25MB (Optional)
+                  </span>
+                </div>
+
+                {isUploadingDoc ? (
+                  <div className="file-selected justify-center">
+                    <Loader2 size={18} className="animate-spin text-[#a78aff]" />
+                    <span className="text-xs text-[#aeb8d1]">Parsing document content...</span>
+                  </div>
+                ) : uploadedFile ? (
+                  <div className="file-selected">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#2b276d] text-[#a78aff]">
+                      <BookOpen size={18} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-bold text-white">{uploadedFile.name}</p>
+                      <p className="mt-0.5 text-[10px] text-[#7582a0]">{uploadedFile.sizeLabel} · Ready</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setUploadedFile(null)
+                        setDocError(null)
+                        if (fileInputRef.current) fileInputRef.current.value = ''
+                      }}
+                      className="text-[#6e7a96] transition-colors hover:text-white"
+                      aria-label="Remove uploaded file"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    onDragOver={(e) => {
+                      e.preventDefault()
+                      setIsDragging(true)
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                    className={`upload-box cursor-pointer transition-colors ${
+                      isDragging ? 'border-[#8a65e7] bg-[#1d224d]' : ''
+                    }`}
+                  >
+                    <Upload size={18} className="text-[#a883ff]" />
+                    <span className="text-xs font-bold text-[#c1c8dc]">
+                      Drop material here or <span className="text-[#9d76ff]">browse files</span>
+                    </span>
+                    <span className="text-[10px] text-[#677491]">
+                      Generates questions grounded in your course materials
+                    </span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".pdf,.docx,.pptx,.txt"
+                      className="sr-only"
+                      onChange={handleFileChange}
+                    />
+                  </label>
+                )}
+
+                {docError && (
+                  <p className="mt-1.5 text-xs text-[#f16e8d]">{docError}</p>
+                )}
+              </div>
+
+              {/* Generation Mode Toggle */}
+              <div>
+                <div className="field-label mb-1.5">Generation mode</div>
+                <div className="mode-grid">
+                  <button
+                    type="button"
+                    onClick={() => setMode('strict')}
+                    disabled={!uploadedFile}
+                    title={!uploadedFile ? 'Upload a reference document first to enable strict mode' : undefined}
+                    className={`mode-button ${mode === 'strict' ? 'selected' : ''} ${
+                      !uploadedFile ? 'opacity-40 cursor-not-allowed' : ''
+                    }`}
+                  >
+                    <ShieldCheck size={18} />
+                    <span>
+                      <strong>Strict material only</strong>
+                      <small>Questions stay strictly inside your upload</small>
+                    </span>
+                    {mode === 'strict' && <Check size={15} className="ml-auto" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setMode('enhanced')}
+                    className={`mode-button ${mode === 'enhanced' ? 'selected' : ''}`}
+                  >
+                    <Sparkles size={18} />
+                    <span>
+                      <strong>AI enhanced</strong>
+                      <small>Fill gaps with broader foundational knowledge</small>
+                    </span>
+                    {mode === 'enhanced' && <Check size={15} className="ml-auto" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Gauntlet Length Selector */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="field-label">Gauntlet length</div>
+                  <span className="text-[11px] font-bold text-[#9d83f8]">
+                    {length / 5} {length === 5 ? 'tier' : 'tiers'} · {length} questions
+                  </span>
+                </div>
+                <div className="mt-1.5 grid grid-cols-4 gap-2">
+                  {[5, 10, 15, 20].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setLength(n)}
+                      disabled={isLoading}
+                      className={`length-button ${length === n ? 'selected' : ''}`}
+                    >
+                      <strong>{n}</strong>
+                      <span>questions</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Cold Start Server Warning */}
+              {isLoading && showColdStartWarning && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/15 p-3.5 text-xs text-amber-200 animate-in fade-in"
+                >
+                  <Clock className="size-4 shrink-0 text-amber-400 animate-pulse mt-0.5" aria-hidden="true" />
+                  <div className="flex-1 text-left">
+                    <p className="font-semibold text-amber-300">Server Cold Start</p>
+                    <p className="mt-0.5 text-[11px] text-amber-200/90 leading-relaxed">
+                      Waking up the server... this might take 40-50 seconds on the first run.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {error && (
+                <div
+                  role="alert"
+                  className="flex items-start gap-3 rounded-xl border border-[#f16e8d]/50 bg-[#f16e8d]/15 p-3.5 text-xs text-[#f16e8d] animate-in fade-in"
+                >
+                  <AlertCircle className="size-4 shrink-0 mt-0.5" aria-hidden="true" />
+                  <div className="flex-1 text-left">
+                    <p className="font-semibold">Unable to initialize gauntlet</p>
+                    <p className="mt-0.5 text-[11px] leading-relaxed opacity-90">{error}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="mt-6 flex flex-col gap-2.5 pt-1 sm:flex-row">
+                <button
+                  type="submit"
+                  disabled={!trimmedTopic || isLoading || isUploadingDoc}
+                  className="primary-button flex-1 justify-center"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Generating gauntlet...
+                    </>
+                  ) : (
+                    <>
+                      <Play size={14} fill="currentColor" /> Enter the arena
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onHowTo) onHowTo()
+                    else setIsHowToPlayOpen(true)
+                  }}
+                  disabled={isLoading}
+                  className="secondary-button justify-center"
+                >
+                  <CircleHelp size={15} /> How to play
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {/* Real Personal Best & Daily Challenge Aside */}
+          <aside className="space-y-4">
+            <div className="panel p-4 sm:p-5">
+              <p className="eyebrow">Personal best</p>
+              <div className="mt-2.5 flex items-end gap-2">
+                <span className="text-2xl sm:text-3xl font-black text-white font-mono">
+                  {stats && stats.highestScore > 0 ? stats.highestScore.toLocaleString() : '0'}
+                </span>
+                <span className="mb-0.5 text-xs text-[#7f8aa7]">IP</span>
+              </div>
+              <div className="mt-2 text-[11px] text-[#73e7a8]">
+                {stats && stats.gamesPlayed > 0
+                  ? `${stats.gamesPlayed} completed run${stats.gamesPlayed > 1 ? 's' : ''}`
+                  : 'Play a run to establish your record'}
+              </div>
+              <div className="mt-3.5 grid grid-cols-3 gap-1.5 sm:gap-2 text-center font-mono">
+                <div className="stat-mini">
+                  <strong>{stats && stats.bestAccuracy > 0 ? `${stats.bestAccuracy}%` : '0%'}</strong>
+                  <span>accuracy</span>
+                </div>
+                <div className="stat-mini">
+                  <strong>{stats ? stats.highestStreak : 0}</strong>
+                  <span>best streak</span>
+                </div>
+                <div className="stat-mini">
+                  <strong>
+                    {stats && stats.bestTimeSeconds > 0
+                      ? formatDuration(stats.bestTimeSeconds)
+                      : '--:--'}
+                  </strong>
+                  <span>best time</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="panel overflow-hidden p-4 sm:p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="eyebrow">Daily challenge</p>
+                  <h3 className="mt-1 text-sm sm:text-base font-black text-white">The Signal Boost</h3>
+                </div>
+                <div className="rounded-lg bg-[#2c235c] p-2 text-[#b893ff]">
+                  <Zap size={16} />
+                </div>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-[#8490ad]">
+                Answer 3 questions in a row without using a power-up.
+              </p>
+              <div className="mt-3 flex items-end justify-between">
+                <div>
+                  <span className="text-lg font-black text-[#e9ad43]">+250</span>
+                  <span className="ml-1 text-[10px] text-[#74809d]">IP bonus</span>
+                </div>
+                <div className="text-right">
+                  <div className="text-[9px] font-bold text-[#74809d]">OBJECTIVE</div>
+                  <div className="text-xs font-bold text-white">Active Daily</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="status-card">
+              <Flame
+                size={22}
+                className={stats && stats.activeDayStreak > 0 ? 'text-[#ff9d4d]' : 'text-[#5f6c89]'}
+              />
+              <div>
+                <p className="text-xs font-black text-white">
+                  {stats && stats.activeDayStreak > 0
+                    ? 'Your streak is alive'
+                    : 'Start your streak'}
+                </p>
+                <p className="mt-0.5 text-[10px] text-[#929db8]">
+                  {stats && stats.activeDayStreak > 0
+                    ? `${stats.activeDayStreak} day${stats.activeDayStreak > 1 ? 's' : ''} of showing up.`
+                    : 'Enter the arena to build your daily streak.'}
                 </p>
               </div>
             </div>
-          )}
-
-          {/* Error Message */}
-          {error && (
-            <div
-              role="alert"
-              className="mt-6 flex items-start gap-3 rounded-xl border border-destructive/50 bg-destructive/15 p-4 text-sm text-destructive animate-in fade-in"
-            >
-              <AlertCircle className="size-5 shrink-0 text-destructive" aria-hidden="true" />
-              <div className="flex-1 text-left">
-                <p className="font-semibold">Unable to initialize gauntlet</p>
-                <p className="mt-0.5 text-xs text-destructive/90 leading-relaxed">{error}</p>
-              </div>
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={!trimmedTopic || isLoading}
-            className="mt-8 flex w-full items-center justify-center gap-3 rounded-xl bg-primary px-6 py-4 text-base font-bold uppercase tracking-wide text-primary-foreground shadow-[0_6px_0_0_var(--primary-edge),0_0_40px_-8px_var(--primary)] transition-all enabled:hover:-translate-y-0.5 enabled:hover:shadow-[0_8px_0_0_var(--primary-edge),0_0_56px_-6px_var(--primary)] enabled:active:translate-y-1.5 enabled:active:shadow-[0_0_0_0_var(--primary-edge)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-card disabled:cursor-not-allowed disabled:opacity-50 md:text-lg"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="size-5 animate-spin" aria-hidden="true" />
-                Generating gauntlet...
-              </>
-            ) : (
-              <>
-                <Zap className="size-5" aria-hidden="true" />
-                Initialize Gauntlet
-              </>
-            )}
-          </button>
-          <p className="sr-only" aria-live="polite">
-            {isLoading ? `Generating gauntlet for ${trimmedTopic}` : ''}
-          </p>
-        </form>
-
-        <ul className="mt-8 grid grid-cols-3 gap-3 text-center">
-          <FeatureStat icon={Layers} value="20" label="Stage ladder" />
-          <FeatureStat icon={Trophy} value="4" label="Tiers" />
-          <FeatureStat icon={Sparkles} value="3" label="Power-ups" />
-        </ul>
+          </aside>
+        </div>
       </div>
 
-      {/* How to Play Modal */}
-      {isHowToPlayOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="how-to-play-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4 backdrop-blur-md animate-in fade-in duration-150"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setIsHowToPlayOpen(false)
-          }}
-        >
-          <div className="relative flex max-h-[88dvh] w-full max-w-2xl flex-col rounded-2xl border border-border bg-card p-6 shadow-2xl md:p-8">
-            <div className="flex items-center justify-between border-b border-border pb-4">
-              <div className="flex items-center gap-2">
-                <BookOpen className="size-5 text-primary" aria-hidden="true" />
-                <h2 id="how-to-play-title" className="text-xl font-bold tracking-tight text-foreground">
-                  How to Play OmniQuest
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsHowToPlayOpen(false)}
-                className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                aria-label="Close How to Play modal"
-              >
-                <X className="size-5" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="flex-1 space-y-6 overflow-y-auto py-5 pr-1 text-sm text-muted-foreground">
-              {/* 20-Stage Structure */}
-              <section>
-                <h3 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                  <Layers className="size-4 text-primary" aria-hidden="true" />
-                  1. The 20-Stage Gauntlet
-                </h3>
-                <p className="mt-1.5 leading-relaxed">
-                  OmniQuest generates a bespoke 20-question challenge on your chosen topic and target level.
-                  Questions progress sequentially from Stage 1 through Stage 20 with increasing depth and complexity.
-                </p>
-              </section>
-
-              {/* 4 Difficulty Tiers */}
-              <section>
-                <h3 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                  <Trophy className="size-4 text-tier-1" aria-hidden="true" />
-                  2. Four Difficulty Tiers
-                </h3>
-                <ul className="mt-2 space-y-1.5 text-xs">
-                  <li className="flex items-start gap-2">
-                    <span className="font-bold text-tier-1">Tier 1 (Stages 1–5):</span>
-                    <span>Foundational definitions and core recall.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="font-bold text-tier-2">Tier 2 (Stages 6–10):</span>
-                    <span>Conceptual connections, relationships, and mechanisms.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="font-bold text-tier-3">Tier 3 (Stages 11–15):</span>
-                    <span>Applied scenarios, edge cases, and problem-solving.</span>
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="font-bold text-tier-4">Tier 4 (Stages 16–20):</span>
-                    <span>Multi-step reasoning culminating in a Golden Challenge at Stage 20.</span>
-                  </li>
-                </ul>
-              </section>
-
-              {/* Insight Points & Progression */}
-              <section>
-                <h3 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                  <Sparkles className="size-4 text-primary" aria-hidden="true" />
-                  3. Insight Points (IP) & Tier Gates
-                </h3>
-                <p className="mt-1.5 leading-relaxed">
-                  Each stage gives you a 20-second timer. Correct answers award{' '}
-                  <span className="font-bold text-foreground">100 base IP</span> plus{' '}
-                  <span className="font-bold text-primary">5 bonus IP per remaining second</span> (up to 200 IP total).
-                </p>
-                <p className="mt-1.5 leading-relaxed">
-                  <span className="font-semibold text-destructive">Tier Gate Checkpoints:</span> At Stages 5, 10, and 15,
-                  you must accumulate at least <span className="font-mono font-bold text-foreground">300 IP</span> within
-                  that tier to clear the gate. Failing to meet the threshold ends your run immediately.
-                </p>
-              </section>
-
-              {/* Answer Selection & Manual Progression */}
-              <section>
-                <h3 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                  <Zap className="size-4 text-primary" aria-hidden="true" />
-                  4. Answer Selection & Manual Progression
-                </h3>
-                <p className="mt-1.5 leading-relaxed">
-                  When you select an answer, your submission is locked and the timer immediately stops.
-                  The server validates your response and provides the verified correct answer and explanation.
-                </p>
-                <p className="mt-1.5 leading-relaxed">
-                  Take all the time you need to study the explanation. You advance only when you click the prominent{' '}
-                  <span className="font-bold text-primary">Next Stage</span> button.
-                </p>
-              </section>
-
-              {/* Power-Ups */}
-              <section>
-                <h3 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-foreground">
-                  <Sparkles className="size-4 text-tier-2" aria-hidden="true" />
-                  5. Power-Ups
-                </h3>
-                <p className="mt-1.5 leading-relaxed">
-                  You have access to 3 tactical power-ups (usable once per run):
-                </p>
-                <ul className="mt-1.5 space-y-1 text-xs">
-                  <li>
-                    <span className="font-bold text-foreground">Time Freeze:</span> Freezes the 20-second countdown for 5 seconds.
-                  </li>
-                  <li className="text-muted-foreground/80">
-                    <span className="font-semibold text-foreground/80">AI Hint & 50/50:</span> Previews of upcoming features (currently locked in live play).
-                  </li>
-                </ul>
-              </section>
-            </div>
-
-            <div className="border-t border-border pt-4">
-              <button
-                type="button"
-                onClick={() => setIsHowToPlayOpen(false)}
-                className="flex w-full items-center justify-center rounded-xl bg-primary px-6 py-3 font-bold uppercase tracking-wide text-primary-foreground transition-all hover:opacity-95 active:translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              >
-                Got It, Let&apos;s Play!
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </main>
-  )
-}
-
-function FeatureStat({
-  icon: Icon,
-  value,
-  label,
-}: {
-  icon: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>
-  value: string
-  label: string
-}) {
-  return (
-    <li className="rounded-xl border border-border bg-card/60 px-3 py-4">
-      <Icon className="mx-auto size-5 text-primary" aria-hidden />
-      <p className="mt-2 font-mono text-xl font-bold">{value}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
-    </li>
+      {/* Functional How to Play Modal */}
+      <HowToPlayModal
+        isOpen={isHowToPlayOpen}
+        onClose={() => setIsHowToPlayOpen(false)}
+        onStart={() => handleSubmit()}
+      />
+    </div>
   )
 }

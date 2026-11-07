@@ -4,12 +4,16 @@ import { useEffect, useEffectEvent, useState } from 'react'
 import {
   AlertCircle,
   ArrowRight,
-  CheckCircle2,
+  Brain,
+  Check,
+  Gem,
+  Info,
+  Lightbulb,
   RotateCcw,
-  XCircle,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { submitAnswer } from '@/lib/api'
+import { submitAnswer, useFiftyFifty, useHint } from '@/lib/api'
 import {
   OPTION_LETTERS,
   QUESTION_TIME_LIMIT_MS,
@@ -25,11 +29,12 @@ import {
 } from '@/lib/quiz-data'
 import { AnswerButton, type AnswerState } from './answer-button'
 import { ArenaTopBar } from './arena-top-bar'
-import { PowerUpsBar } from './power-ups-bar'
+import { MobilePowerupsBar, Powerups, type PowerUpItemStatus } from './power-ups-bar'
 
 interface QuestionRoundProps {
   sessionId: string
   topic: string
+  difficulty?: string
   question: PublicQuestion
   stage: number
   questionNumber: number
@@ -37,9 +42,14 @@ interface QuestionRoundProps {
   score: number
   tierScore?: number
   tierTarget?: number
-  usedPowerUps: Record<PowerUpId, boolean>
-  onUsePowerUp: (id: PowerUpId) => void
-  onComplete: (record: AnswerRecord) => void
+  streak: number
+  streakFireActive: boolean
+  powerUps: Record<PowerUpId, PowerUpItemStatus>
+  onUsePowerUp: (id: PowerUpId, nextRemaining?: number) => void
+  onComplete: (
+    record: AnswerRecord,
+    streakInfo?: { streak: number; streakFireActive: boolean },
+  ) => void
   onForfeit?: () => void
   isForfeitDialogOpen?: boolean
 }
@@ -47,14 +57,17 @@ interface QuestionRoundProps {
 export function QuestionRound({
   sessionId,
   topic,
+  difficulty = 'Medium',
   question,
   stage,
   questionNumber,
   totalQuestions,
   score,
   tierScore = 0,
-  tierTarget,
-  usedPowerUps,
+  tierTarget = 300,
+  streak,
+  streakFireActive,
+  powerUps,
   onUsePowerUp,
   onComplete,
   onForfeit,
@@ -69,6 +82,15 @@ export function QuestionRound({
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const [result, setResult] = useState<AnswerRecord | null>(null)
   const [isAdvancing, setIsAdvancing] = useState(false)
+
+  // Live power-up state
+  const [hintText, setHintText] = useState<string | null>(null)
+  const [eliminatedOptions, setEliminatedOptions] = useState<string[]>([])
+  const [loadingPowerUps, setLoadingPowerUps] = useState<Partial<Record<PowerUpId, boolean>>>({})
+
+  // Streak state updated by server validation
+  const [currentStreak, setCurrentStreak] = useState(streak)
+  const [isStreakFire, setIsStreakFire] = useState(streakFireActive)
 
   const tier = (question.tier ?? getTier(stage)) as Tier
   const tierStyles = TIER_STYLES[tier] || TIER_STYLES[1]
@@ -101,7 +123,17 @@ export function QuestionRound({
       })
 
       const isCorrect = response.is_correct
-      const pointsEarned = isCorrect ? calculatePoints(remainingMs) : 0
+      const speedBonus = isCorrect ? Math.round(remainingMs / 1000) * 5 : 0
+      const basePoints = response.base_ip_awarded ?? (isCorrect ? 100 : 0)
+      const streakBonus = response.bonus_ip_awarded ?? 0
+      const pointsEarned = isCorrect ? basePoints + speedBonus + streakBonus : 0
+
+      if (response.current_streak !== undefined) {
+        setCurrentStreak(response.current_streak)
+      }
+      if (response.streak_fire_active !== undefined) {
+        setIsStreakFire(response.streak_fire_active)
+      }
 
       const record: AnswerRecord = {
         questionId: `stage-${question.stage}`,
@@ -128,7 +160,7 @@ export function QuestionRound({
     }
   }
 
-  // Countdown timer tick: only ticks down when input is not locked and not frozen
+  // Timer tick down
   useEffect(() => {
     if (isInputLocked || isFrozen) return
     const intervalId = window.setInterval(() => {
@@ -137,7 +169,7 @@ export function QuestionRound({
     return () => window.clearInterval(intervalId)
   }, [isInputLocked, isFrozen])
 
-  // Handle timeout by submitting an empty selected_option
+  // Handle timeout
   const handleTimeout = useEffectEvent(() => {
     submitOption('', null, 0)
   })
@@ -155,21 +187,74 @@ export function QuestionRound({
     return () => window.clearTimeout(timeoutId)
   }, [isFrozen])
 
-  function handlePowerUp(id: PowerUpId) {
-    if (isInputLocked || usedPowerUps[id]) return
+  async function handlePowerUp(id: PowerUpId) {
+    const status = powerUps[id]
+    if (
+      isInputLocked ||
+      !status ||
+      status.max === 0 ||
+      status.remaining <= 0 ||
+      status.usedOnStage ||
+      loadingPowerUps[id]
+    ) {
+      return
+    }
+
     if (id === 'freeze') {
-      onUsePowerUp('freeze')
+      if (isFrozen) return
       setIsFrozen(true)
+      onUsePowerUp('freeze', Math.max(0, status.remaining - 1))
+    } else if (id === 'hint') {
+      setLoadingPowerUps((prev) => ({ ...prev, hint: true }))
+      try {
+        const res = await useHint(sessionId, stage)
+        const nextRem =
+          typeof res.remaining_hints === 'number'
+            ? res.remaining_hints
+            : Math.max(0, status.remaining - 1)
+        onUsePowerUp('hint', nextRem)
+        setHintText(res.hint)
+      } catch (err: unknown) {
+        // Failed API request must NOT consume power-up charge
+        const errMsg = err instanceof Error ? err.message : 'Could not fetch AI hint.'
+        setHintText(`Notice: ${errMsg}`)
+      } finally {
+        setLoadingPowerUps((prev) => ({ ...prev, hint: false }))
+      }
+    } else if (id === 'fiftyFifty') {
+      setLoadingPowerUps((prev) => ({ ...prev, fiftyFifty: true }))
+      try {
+        const res = await useFiftyFifty(sessionId, stage)
+        const nextRem =
+          typeof res.remaining_fifty_fifty === 'number'
+            ? res.remaining_fifty_fifty
+            : Math.max(0, status.remaining - 1)
+        onUsePowerUp('fiftyFifty', nextRem)
+        setEliminatedOptions(res.options_to_remove)
+      } catch (err: unknown) {
+        // Failed API request must NOT consume power-up charge
+        const errMsg = err instanceof Error ? err.message : 'Could not eliminate options.'
+        setSubmissionError(errMsg)
+      } finally {
+        setLoadingPowerUps((prev) => ({ ...prev, fiftyFifty: false }))
+      }
     }
   }
 
   function handleNextStage() {
     if (!result || isAdvancing) return
     setIsAdvancing(true)
-    onComplete(result)
+    onComplete(result, {
+      streak: currentStreak,
+      streakFireActive: isStreakFire,
+    })
   }
 
   function getAnswerState(index: number, option: string): AnswerState {
+    if (eliminatedOptions.includes(option)) {
+      return 'eliminated'
+    }
+
     if (result) {
       if (option === result.correctAnswer) {
         return result.isCorrect ? 'correct' : 'reveal'
@@ -190,166 +275,218 @@ export function QuestionRound({
     return 'idle'
   }
 
-  const correctOptionIndex = result
-    ? question.options.findIndex((opt) => opt === result.correctAnswer)
-    : -1
-  const correctLetter =
-    correctOptionIndex >= 0 ? OPTION_LETTERS[correctOptionIndex] : ''
-
-  const feedbackMessage = !result
-    ? ''
-    : result.isCorrect
-      ? `Correct! +${result.pointsEarned} IP`
-      : result.selectedAnswer === null
-        ? `Time's up. The answer was ${correctLetter ? `${correctLetter}: ` : ''}${result.correctAnswer}`
-        : `Incorrect. The answer was ${correctLetter ? `${correctLetter}: ` : ''}${result.correctAnswer}`
-
-  const currentTierScore = tierScore + (result?.pointsEarned ?? 0)
   const currentTotalScore = score + (result?.pointsEarned ?? 0)
+  const currentTierScore = tierScore + (result?.pointsEarned ?? 0)
+  const accuracyPercent =
+    stage > 1 ? Math.round((score / ((stage - 1) * 150)) * 100) : 100
+
+  // Difficulty dot color index
+  const diffIndex =
+    difficulty.toLowerCase() === 'easy'
+      ? 0
+      : difficulty.toLowerCase() === 'hard'
+        ? 2
+        : difficulty.toLowerCase() === 'expert'
+          ? 3
+          : 1
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
-      {/* Top Bar with score, timer, tier meter, and forfeit run button */}
-      <ArenaTopBar
-        topic={topic}
-        questionNumber={questionNumber}
-        totalQuestions={totalQuestions}
-        score={currentTotalScore}
-        timeLeftMs={timeLeftMs}
-        isFrozen={isFrozen}
-        currentTier={tier}
-        tierScore={currentTierScore}
-        tierTarget={tierTarget}
-        onForfeitClick={onForfeit}
-      />
+    <div className="flex h-full min-h-0 flex-1 flex-row overflow-hidden">
+      {/* Center Column: Top bar + Question Arena */}
+      <div className="flex min-w-0 flex-1 flex-col h-full overflow-hidden">
+        {/* Arena Top Status Bar */}
+        <ArenaTopBar
+          topic={topic}
+          difficulty={difficulty}
+          stageNumber={questionNumber}
+          totalStages={totalQuestions}
+          score={currentTotalScore}
+          streak={currentStreak}
+          streakFireActive={isStreakFire}
+          timeLeftMs={timeLeftMs}
+          isFrozen={isFrozen}
+          currentTier={tier}
+          tierScore={currentTierScore}
+          tierTarget={tierTarget}
+          onForfeitClick={onForfeit}
+        />
 
-      {/* Center Section: Flexible, centered, internal scrolling only */}
-      <div className="flex min-h-0 flex-1 flex-col justify-center overflow-y-auto px-4 py-4 md:px-8 md:py-6">
-        <div className="mx-auto my-auto flex w-full max-w-4xl flex-col gap-4 md:gap-6">
-          {/* Question Card */}
-          <section
-            aria-labelledby="question-prompt"
-            className="rounded-2xl border border-border bg-card p-5 shadow-lg md:p-8"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span
-                className={cn(
-                  'rounded-full border px-3 py-0.5 font-mono text-xs uppercase tracking-widest',
-                  tierStyles.border,
-                  tierStyles.softBg,
-                  tierStyles.text,
-                )}
-              >
-                Stage {stage} · {tierStyles.label}
-              </span>
-              <span className="rounded-full border border-border bg-secondary px-3 py-0.5 text-xs text-muted-foreground">
-                {topic}
-              </span>
-            </div>
-            <h1
-              id="question-prompt"
-              className="mt-3 text-balance text-xl font-bold leading-snug tracking-tight text-foreground md:text-2xl lg:text-3xl"
-            >
-              {question.question}
-            </h1>
-          </section>
-
-          {/* Feedback & Explanation & Next Stage Section */}
-          {result && (
-            <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/80 bg-card/60 p-4 text-center shadow-md backdrop-blur-sm animate-in fade-in zoom-in-95 duration-150 md:p-6">
-              <div
-                role="status"
-                aria-live="polite"
-                className={cn(
-                  'flex items-center gap-2 font-mono text-base font-bold uppercase tracking-wider md:text-lg',
-                  result.isCorrect ? 'text-tier-1' : 'text-destructive',
-                )}
-              >
-                {result.isCorrect ? (
-                  <CheckCircle2 className="size-5 shrink-0" aria-hidden="true" />
-                ) : (
-                  <XCircle className="size-5 shrink-0" aria-hidden="true" />
-                )}
-                <span>{feedbackMessage}</span>
+        {/* Main Viewport Content Area */}
+        <main className="arena-bg flex min-h-0 flex-1 flex-col items-center overflow-y-auto p-4 sm:p-8">
+          <div className="w-full max-w-[760px] my-auto space-y-4">
+            {/* Stage & Question Value Header */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="eyebrow">
+                  STAGE {stage} OF {totalQuestions}
+                </span>
+                <div className="mt-1 flex items-center gap-2">
+                  <span className="tier-badge">{tierStyles.label}</span>
+                  <span className="text-xs text-[#76839f]">
+                    {stage === totalQuestions ? '· Final challenge' : '· Checkpoint run'}
+                  </span>
+                </div>
               </div>
 
-              {result.explanation && (
-                <div className="max-h-32 w-full overflow-y-auto rounded-xl border border-border/70 bg-card/90 px-4 py-2.5 text-xs leading-relaxed text-muted-foreground md:text-sm">
-                  <span className="font-semibold text-foreground">Explanation: </span>
-                  {result.explanation}
+              <div className="text-right">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-[#727e9b]">
+                  Question value
+                </div>
+                <div className="mt-1 flex items-center gap-1 text-sm font-black text-[#e9ad43]">
+                  <Gem size={14} />
+                  <span>+{100 + Math.round(timeLeftMs / 1000) * 5} IP</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Question Panel */}
+            <div className="question-panel">
+              <div className="mb-6 flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-[#a3aec7]">
+                  <Brain size={16} className="text-[#a67eff]" />
+                  <span>{topic}</span>
+                </div>
+                <div className="difficulty-pill">
+                  <span className={`difficulty-dot d-${diffIndex}`} />
+                  <span>{difficulty}</span>
+                </div>
+              </div>
+
+              <h2 className="text-xl sm:text-[26px] font-black leading-[1.3] text-white">
+                {question.question}
+              </h2>
+
+              {/* AI Hint Callout Box */}
+              {hintText && (
+                <div className="mt-5 flex items-start gap-3 rounded-xl border border-[#654db0] bg-[#2b205b]/45 p-3 text-xs leading-5 text-[#d3c8ff] animate-in fade-in">
+                  <Lightbulb size={16} className="mt-0.5 shrink-0 text-[#d6a64b]" />
+                  <span>
+                    <strong className="text-white">AI Hint: </strong>
+                    {hintText}
+                  </span>
                 </div>
               )}
 
-              {/* Prominent Next Stage Button: Manual Progression */}
-              <button
-                type="button"
-                onClick={handleNextStage}
-                disabled={isAdvancing}
-                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-8 py-3 text-base font-bold uppercase tracking-wider text-primary-foreground shadow-[0_4px_0_0_var(--primary-edge),0_0_32px_-6px_var(--primary)] transition-all hover:-translate-y-0.5 hover:shadow-[0_6px_0_0_var(--primary-edge),0_0_44px_-4px_var(--primary)] active:translate-y-1 active:shadow-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 sm:w-auto"
-              >
-                <span>{stage === totalQuestions ? 'Complete Gauntlet' : 'Next Stage'}</span>
-                <ArrowRight className="size-5" aria-hidden="true" />
-              </button>
-            </div>
-          )}
+              {/* Submission Error Banner */}
+              {submissionError && (
+                <div
+                  role="alert"
+                  className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-[#f16e8d]/50 bg-[#f16e8d]/15 p-3 text-xs text-[#f16e8d]"
+                >
+                  <div className="flex items-center gap-2">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <span>{submissionError}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      submitOption(
+                        selectedOptionText ?? '',
+                        selectedIndex,
+                        remainingTimeOnAnswer,
+                      )
+                    }
+                    className="inline-flex items-center gap-1 rounded bg-[#f16e8d] px-2.5 py-1 text-[11px] font-bold text-[#2a131b]"
+                  >
+                    <RotateCcw size={12} /> Retry
+                  </button>
+                </div>
+              )}
 
-          {/* Submission Error Banner */}
-          {submissionError && (
-            <div
-              role="alert"
-              className="flex w-full flex-col items-center justify-between gap-3 rounded-xl border border-destructive/50 bg-destructive/15 p-4 text-center sm:flex-row sm:text-left animate-in fade-in"
-            >
-              <div className="flex items-center gap-2 text-sm text-destructive">
-                <AlertCircle className="size-5 shrink-0" aria-hidden="true" />
-                <span>{submissionError}</span>
+              {/* 4 Answer Options */}
+              <div className="mt-7 grid gap-3 sm:grid-cols-2">
+                {question.options.map((option, idx) => (
+                  <AnswerButton
+                    key={option}
+                    letter={OPTION_LETTERS[idx]}
+                    text={option}
+                    state={getAnswerState(idx, option)}
+                    disabled={isInputLocked}
+                    onSelect={() => submitOption(option, idx, timeLeftMs)}
+                  />
+                ))}
               </div>
-              <button
-                type="button"
-                onClick={() =>
-                  submitOption(
-                    selectedOptionText ?? '',
-                    selectedIndex,
-                    remainingTimeOnAnswer,
-                  )
-                }
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-destructive px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-destructive-foreground transition-opacity hover:opacity-90"
-              >
-                <RotateCcw className="size-3.5" aria-hidden="true" />
-                Retry Submission
-              </button>
-            </div>
-          )}
 
-          {/* Answer Options Grid */}
-          <div
-            role="group"
-            aria-label="Answer options"
-            className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-          >
-            {question.options.map((option, index) => (
-              <AnswerButton
-                key={option}
-                letter={OPTION_LETTERS[index]}
-                text={option}
-                state={getAnswerState(index, option)}
-                disabled={isInputLocked}
-                onSelect={() => submitOption(option, index, timeLeftMs)}
-              />
-            ))}
+              {/* Result Feedback & Explanation Box */}
+              {result && (
+                <div
+                  className={cn(
+                    'result-box animate-in fade-in zoom-in-95 duration-150',
+                    result.isCorrect ? 'good' : 'bad',
+                  )}
+                >
+                  <div className="flex items-center gap-2 font-black text-white text-sm sm:text-base">
+                    {result.isCorrect ? (
+                      <Check size={18} className="text-[#75e9ae]" />
+                    ) : (
+                      <X size={18} className="text-[#f16e8d]" />
+                    )}
+                    <span>
+                      {result.isCorrect
+                        ? `Correct · +${result.pointsEarned} Insight Points`
+                        : result.selectedAnswer === null
+                          ? "Time's up — keep your focus"
+                          : 'Not quite — study the explanation below'}
+                    </span>
+                  </div>
+
+                  {result.explanation && (
+                    <p className="mt-2 text-xs leading-5 text-[#aab4ca] max-h-32 overflow-y-auto">
+                      <strong className="text-white">Explanation: </strong>
+                      {result.explanation}
+                    </p>
+                  )}
+
+                  {/* Prominent Next Stage Button: Manual Progression */}
+                  <button
+                    type="button"
+                    onClick={handleNextStage}
+                    disabled={isAdvancing}
+                    className="primary-button mt-4 w-full justify-center"
+                  >
+                    <span>
+                      {stage === totalQuestions ? 'View results' : 'Next stage'}
+                    </span>
+                    <ArrowRight size={15} />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-center gap-2 text-[10px] text-[#64708c]">
+              <span className="flex items-center gap-1">
+                <Info size={12} />
+                Select an answer to lock your choice. Timer stops immediately.
+              </span>
+            </div>
           </div>
-        </div>
+        </main>
+
+        {/* Mobile Tactical Power-up Bar */}
+        <MobilePowerupsBar
+          difficulty={difficulty}
+          powerUps={powerUps}
+          loadingPowerUps={loadingPowerUps}
+          disabled={isInputLocked}
+          onUse={handlePowerUp}
+        />
       </div>
 
-      {/* Bottom Bar: Power-ups section visible at bottom */}
-      <footer className="shrink-0 border-t border-border/80 bg-background/95 px-4 py-2 backdrop-blur-md md:px-8">
-        <div className="mx-auto w-full max-w-4xl">
-          <PowerUpsBar
-            usedPowerUps={usedPowerUps}
-            disabled={isInputLocked}
-            onUse={handlePowerUp}
-          />
-        </div>
-      </footer>
+      {/* Right Column: Tactical Power-Ups & Live Stats Panel */}
+      <Powerups
+        difficulty={difficulty}
+        powerUps={powerUps}
+        loadingPowerUps={loadingPowerUps}
+        disabled={isInputLocked}
+        score={currentTotalScore}
+        accuracy={accuracyPercent}
+        streak={currentStreak}
+        currentStage={stage}
+        totalStages={totalQuestions}
+        tierScore={currentTierScore}
+        tierTarget={tierTarget}
+        onUse={handlePowerUp}
+      />
     </div>
   )
 }

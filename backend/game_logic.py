@@ -18,6 +18,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
     ValidationInfo,
 )
 
@@ -28,6 +29,14 @@ ALLOWED_QUESTION_COUNTS: tuple[int, ...] = (5, 10, 15, 20)
 DEFAULT_QUESTION_COUNT: int = 20
 MAX_INPUT_LENGTH: int = 50
 DEFAULT_MAX_DOCUMENT_LENGTH: int = 100_000
+
+# Power-up allocation rules per difficulty (applies to all gauntlet lengths)
+POWER_UP_LIMITS: dict[str, dict[str, int]] = {
+    "Easy": {"hint": 2, "fifty_fifty": 2, "time_freeze": 2},
+    "Medium": {"hint": 1, "fifty_fifty": 1, "time_freeze": 2},
+    "Hard": {"hint": 0, "fifty_fifty": 0, "time_freeze": 2},
+    "Expert": {"hint": 0, "fifty_fifty": 0, "time_freeze": 0},
+}
 
 # Base scoring constants
 BASE_IP_PER_QUESTION: int = 100
@@ -438,6 +447,7 @@ class GenerateGameRequest(BaseModel):
     topic: str = Field(..., max_length=MAX_INPUT_LENGTH)
     target_level: str = Field(default="General", max_length=MAX_INPUT_LENGTH)
     question_count: int = Field(default=DEFAULT_QUESTION_COUNT)
+    difficulty: Literal["Easy", "Medium", "Hard", "Expert"] = "Medium"
     source_text: str | None = Field(default=None, max_length=DEFAULT_MAX_DOCUMENT_LENGTH)
     generation_mode: Literal["Strict Material Only", "AI Enhanced"] = "AI Enhanced"
 
@@ -446,6 +456,27 @@ class GenerateGameRequest(BaseModel):
     def _validate_fields(cls, value: str, info: ValidationInfo) -> str:
         field_name = info.field_name or "Field"
         return sanitize_input_text(value, field_name)
+
+    @field_validator("difficulty", mode="before")
+    @classmethod
+    def _validate_difficulty(cls, value: Any) -> str:
+        if not value or not isinstance(value, str):
+            return "Medium"
+        normalized = value.strip().capitalize()
+        if normalized not in POWER_UP_LIMITS:
+            raise ValueError(
+                f"Invalid difficulty '{value}'. Allowed: {', '.join(POWER_UP_LIMITS.keys())}."
+            )
+        return normalized
+
+    @model_validator(mode="after")
+    def _infer_difficulty_from_target_level(self) -> GenerateGameRequest:
+        # If difficulty is default Medium but target_level explicitly specifies a difficulty, infer it
+        if self.difficulty == "Medium" and self.target_level:
+            match = re.search(r"-\s*(Easy|Medium|Hard|Expert)\s*Level", self.target_level, re.IGNORECASE)
+            if match:
+                self.difficulty = match.group(1).capitalize()  # type: ignore[assignment]
+        return self
 
     @field_validator("question_count")
     @classmethod
@@ -465,6 +496,8 @@ class GenerateGameResponse(BaseModel):
 
     session_id: str
     topic: str
+    difficulty: str = "Medium"
+    power_up_limits: dict[str, int] | None = None
     question_count: int
     gauntlet: list[PublicQuestion]
     tier_checkpoints: list[int]
@@ -480,6 +513,7 @@ class UseHintRequest(BaseModel):
 
 class UseHintResponse(BaseModel):
     hint: str
+    remaining_hints: int | None = None
 
 
 class UseFiftyFiftyRequest(BaseModel):
@@ -489,6 +523,17 @@ class UseFiftyFiftyRequest(BaseModel):
 
 class UseFiftyFiftyResponse(BaseModel):
     options_to_remove: list[str]
+    remaining_fifty_fifty: int | None = None
+
+
+class ForfeitGameRequest(BaseModel):
+    session_id: str
+
+
+class ForfeitGameResponse(BaseModel):
+    session_id: str
+    status: str = "forfeited"
+    message: str = "Game run forfeited."
 
 
 class SubmitAnswerRequest(BaseModel):
