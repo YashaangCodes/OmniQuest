@@ -40,6 +40,7 @@ def _create_mock_session(
             options=[f"Option {i}A", f"Option {i}B", f"Option {i}C", f"Option {i}D"],
             correct_answer=f"Option {i}A",
             explanation=f"Explanation for question {i}.",
+            hint=f"Focus on the underlying principle of concept {i}.",
         )
         for i in range(1, length + 1)
     ]
@@ -67,9 +68,6 @@ def test_use_hint_successful_generation():
 
     with patch("gemini_service.create_gemini_client") as mock_client_factory:
         mock_gemini = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Look closely at the metabolic pathway."
-        mock_gemini.models.generate_content.return_value = mock_response
         mock_client_factory.return_value = mock_gemini
 
         resp = client.post(
@@ -79,7 +77,10 @@ def test_use_hint_successful_generation():
         assert resp.status_code == 200
         data = resp.json()
         assert "hint" in data
-        assert data["hint"] == "Look closely at the metabolic pathway."
+        assert data["hint"] == "Focus on the underlying principle of concept 1."
+        assert data["is_available"] is True
+        # Phase 2 Guarantee: Gemini is NEVER called during gameplay-time hint activation
+        assert mock_gemini.models.generate_content.call_count == 0
         # Confirm correct answer and explanation are not leaked in the payload
         assert "correct_answer" not in data
         assert "explanation" not in data
@@ -90,9 +91,6 @@ def test_use_hint_caching_on_repeated_requests():
 
     with patch("gemini_service.create_gemini_client") as mock_client_factory:
         mock_gemini = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Focus on the primary enzyme involved."
-        mock_gemini.models.generate_content.return_value = mock_response
         mock_client_factory.return_value = mock_gemini
 
         # First hint request
@@ -102,9 +100,10 @@ def test_use_hint_caching_on_repeated_requests():
         )
         assert resp1.status_code == 200
         hint1 = resp1.json()["hint"]
-        assert mock_gemini.models.generate_content.call_count == 1
+        assert hint1 == "Focus on the underlying principle of concept 1."
+        assert resp1.json()["remaining_hints"] == 0  # Medium difficulty starts with 1 hint
 
-        # Second hint request on same stage
+        # Second hint request on same stage (idempotent retry)
         resp2 = client.post(
             "/use-hint",
             json={"session_id": session_id, "stage_number": 1},
@@ -112,8 +111,9 @@ def test_use_hint_caching_on_repeated_requests():
         assert resp2.status_code == 200
         hint2 = resp2.json()["hint"]
         assert hint2 == hint1
-        # Gemini should NOT have been called a second time
-        assert mock_gemini.models.generate_content.call_count == 1
+        assert resp2.json()["remaining_hints"] == 0
+        # Gemini was NEVER called at all
+        assert mock_gemini.models.generate_content.call_count == 0
 
 
 def test_use_hint_after_question_answered_is_rejected():
@@ -602,29 +602,26 @@ def test_fresh_session_starts_with_full_powerup_allowance():
 
 
 def test_failed_hint_generation_does_not_consume_charge():
-    """If Gemini hint generation encounters an unexpected error, no charge is consumed."""
+    """If a hint is unavailable, no charge is consumed, and subsequent available hints succeed."""
     session_id = _create_mock_session(difficulty="Medium", length=5)
+    # Simulate stage 1 hint unavailable (None)
+    sessions[session_id]["pregenerated_hints"][1] = None
 
-    with patch("main.generate_hint_with_gemini", side_effect=RuntimeError("API Network Drop")):
-        resp = client.post("/use-hint", json={"session_id": session_id, "stage_number": 1})
-        # FastApi raises 500 or handles error
-        assert resp.status_code == 500
+    resp = client.post("/use-hint", json={"session_id": session_id, "stage_number": 1})
+    assert resp.status_code == 200
+    assert resp.json()["is_available"] is False
+    assert resp.json()["hint"] is None
+    assert "unavailable" in resp.json()["message"].lower()
 
     # Ensure no hints were recorded in the session
     assert len(sessions[session_id]["hints"]) == 0
 
-    # Subsequent valid hint call succeeds and consumes the charge
-    with patch("gemini_service.create_gemini_client") as mock_client:
-        mock_gemini = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Valid recovery clue"
-        mock_gemini.models.generate_content.return_value = mock_response
-        mock_client.return_value = mock_gemini
-
-        valid_resp = client.post("/use-hint", json={"session_id": session_id, "stage_number": 1})
-        assert valid_resp.status_code == 200
-        assert valid_resp.json()["hint"] == "Valid recovery clue"
-        assert len(sessions[session_id]["hints"]) == 1
+    # Subsequent available hint call on stage 2 succeeds and consumes the charge
+    valid_resp = client.post("/use-hint", json={"session_id": session_id, "stage_number": 2})
+    assert valid_resp.status_code == 200
+    assert valid_resp.json()["is_available"] is True
+    assert valid_resp.json()["hint"] == "Focus on the underlying principle of concept 2."
+    assert len(sessions[session_id]["hints"]) == 1
 
 
 def test_inferred_difficulty_from_target_level():
@@ -739,37 +736,23 @@ def test_concurrent_hints_expert_difficulty_all_rejected():
 
 
 def test_concurrent_hints_same_stage_prevents_duplicate_generation():
-    """Two simultaneous requests for the exact same stage must not generate two separate Gemini calls."""
+    """Two simultaneous requests for the exact same stage must return the identical hint and consume 1 charge."""
     session_id = _create_mock_session(difficulty="Medium", length=5)
-    call_counter = {"count": 0}
 
-    def slow_gemini(*args, **kwargs):
-        call_counter["count"] += 1
-        time.sleep(0.15)
-        return "Single generation clue"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(lambda: client.post("/use-hint", json={"session_id": session_id, "stage_number": 1}))
+        f2 = executor.submit(lambda: client.post("/use-hint", json={"session_id": session_id, "stage_number": 1}))
+        r1 = f1.result()
+        r2 = f2.result()
 
-    with patch("main.generate_hint_with_gemini", side_effect=slow_gemini):
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            f1 = executor.submit(lambda: client.post("/use-hint", json={"session_id": session_id, "stage_number": 1}))
-            f2 = executor.submit(lambda: client.post("/use-hint", json={"session_id": session_id, "stage_number": 1}))
-            r1 = f1.result()
-            r2 = f2.result()
+    # Both requests succeed and return the identical pre-generated hint
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert r1.json()["hint"] == r2.json()["hint"]
+    assert r1.json()["hint"] == "Focus on the underlying principle of concept 1."
 
-    # One request gets 200 (succeeded), the concurrent duplicate gets 409 (conflict/in-flight)
-    codes = sorted([r1.status_code, r2.status_code])
-    assert codes == [200, 409]
-    conflict_resp = r1 if r1.status_code == 409 else r2
-    assert "currently being generated" in conflict_resp.json()["detail"].lower()
-
-    # Gemini was only called once
-    assert call_counter["count"] == 1
+    # Exactly 1 charge consumed in the session
     assert len(sessions[session_id]["hints"]) == 1
-
-    # Subsequent retry for Stage 1 returns the cached result cleanly
-    retry = client.post("/use-hint", json={"session_id": session_id, "stage_number": 1})
-    assert retry.status_code == 200
-    assert retry.json()["hint"] == "Single generation clue"
-    assert retry.json()["remaining_hints"] == 0
 
 
 def test_concurrent_fifty_fifty_medium_quota_enforced():
@@ -871,15 +854,9 @@ def test_new_game_session_active_after_previous_forfeit():
     assert sessions[s2]["is_forfeited"] is False
     assert len(sessions[s2]["hints"]) == 0
 
-    # Power-up works on Session 2
-    with patch("gemini_service.create_gemini_client") as mock_client:
-        mock_gemini = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Fresh hint"
-        mock_gemini.models.generate_content.return_value = mock_response
-        mock_client.return_value = mock_gemini
-
-        resp = client.post("/use-hint", json={"session_id": s2, "stage_number": 1})
-        assert resp.status_code == 200
-        assert resp.json()["hint"] == "Fresh hint"
+    # Power-up works on Session 2 (instantly retrieving pre-generated hint)
+    resp = client.post("/use-hint", json={"session_id": s2, "stage_number": 1})
+    assert resp.status_code == 200
+    assert resp.json()["hint"] == "Focus on the underlying principle of concept 1."
+    assert len(sessions[s2]["hints"]) == 1
 

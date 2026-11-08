@@ -208,12 +208,17 @@ export function QuestionRound({
       setLoadingPowerUps((prev) => ({ ...prev, hint: true }))
       try {
         const res = await useHint(sessionId, stage)
-        const nextRem =
-          typeof res.remaining_hints === 'number'
-            ? res.remaining_hints
-            : Math.max(0, status.remaining - 1)
-        onUsePowerUp('hint', nextRem)
-        setHintText(res.hint)
+        if (res.is_available === false || !res.hint) {
+          // Hint is unavailable: display notice without deducting charge
+          setHintText(res.message || 'AI Hint is unavailable for this question.')
+        } else {
+          const nextRem =
+            typeof res.remaining_hints === 'number'
+              ? res.remaining_hints
+              : Math.max(0, status.remaining - 1)
+          onUsePowerUp('hint', nextRem)
+          setHintText(res.hint)
+        }
       } catch (err: unknown) {
         // Failed API request must NOT consume power-up charge
         const errMsg = err instanceof Error ? err.message : 'Could not fetch AI hint.'

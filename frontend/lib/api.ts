@@ -45,7 +45,9 @@ export interface UseHintRequest {
 }
 
 export interface UseHintResponse {
-  hint: string
+  hint?: string | null
+  is_available?: boolean
+  message?: string | null
   remaining_hints?: number
 }
 

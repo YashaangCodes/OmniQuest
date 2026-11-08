@@ -125,6 +125,11 @@ def store_session(payload: GauntletPayload, difficulty: str = "Medium") -> str:
         norm_difficulty = "Medium"
     limits = POWER_UP_LIMITS[norm_difficulty]
 
+    # Map pre-generated and validated hints by stage number
+    pregenerated_hints: dict[int, str | None] = {
+        question.stage: question.hint for question in payload.gauntlet
+    }
+
     sessions[session_id] = {
         "topic": payload.topic,
         "difficulty": norm_difficulty,
@@ -135,10 +140,11 @@ def store_session(payload: GauntletPayload, difficulty: str = "Medium") -> str:
         "total_ip_awarded": 0,
         "is_forfeited": False,
         "answered_stages": set(),
-        "hints": {},              # stage_number -> str (cached generated hint)
-        "pending_hints": set(),    # stage numbers currently in-flight
-        "fifty_fifty": {},        # stage_number -> list[str] (cached eliminated options)
-        "submissions": {},        # stage_number -> SubmitAnswerResponse
+        "pregenerated_hints": pregenerated_hints,  # stage_number -> validated hint or None
+        "hints": {},                               # stage_number -> str (hints activated during gameplay)
+        "pending_hints": set(),                    # defensive set
+        "fifty_fifty": {},                         # stage_number -> list[str] (cached eliminated options)
+        "submissions": {},                         # stage_number -> SubmitAnswerResponse
     }
     return session_id
 
@@ -156,6 +162,7 @@ def _ensure_session_state(session: dict[str, Any]) -> None:
         session["answered_stages"] = set(session.get("answered_stages", []))
     if "pending_hints" not in session or not isinstance(session["pending_hints"], set):
         session["pending_hints"] = set(session.get("pending_hints", []))
+    session.setdefault("pregenerated_hints", {})
     session.setdefault("hints", {})
     session.setdefault("fifty_fifty", {})
     session.setdefault("submissions", {})
@@ -357,15 +364,11 @@ def forfeit_game(request: ForfeitGameRequest) -> ForfeitGameResponse:
 @app.post("/use-hint", response_model=UseHintResponse)
 def use_hint(request: UseHintRequest) -> UseHintResponse:
     """
-    Generate a subtle, 1-sentence hint for the player without revealing the correct answer.
-    Enforces difficulty-based usage limits:
-    - Easy: 2 per run
-    - Medium: 1 per run
-    - Hard: 0 per run
-    - Expert: 0 per run
-
-    Atomically validates quotas and tracks in-flight generation to prevent race conditions.
-    Avoids holding a session lock during external Gemini calls.
+    Activate AI Hint for the current stage.
+    Retrieves the pre-generated hint instantly from the session without calling Gemini.
+    Enforces difficulty limits: Easy: 2, Medium: 1, Hard: 0, Expert: 0.
+    Preserves idempotent retries on the same question.
+    If hint is unavailable, returns is_available=False without consuming a charge.
     """
     session = sessions.get(request.session_id)
     if session is None:
@@ -393,7 +396,7 @@ def use_hint(request: UseHintRequest) -> UseHintResponse:
     )
     max_hints = limits.get("hint", 0)
 
-    # Phase 1: Atomic validation and reservation under session lock
+    # Atomic validation and retrieval under session lock
     with lock:
         if session.get("is_forfeited"):
             raise HTTPException(
@@ -413,75 +416,50 @@ def use_hint(request: UseHintRequest) -> UseHintResponse:
                 detail=f"Stage {request.stage_number} has already been answered.",
             )
 
-        # Idempotent retry: Return cached hint if already requested for this question
+        # Idempotent retry: Return already activated hint for this stage without deducting an extra charge
         if request.stage_number in session["hints"]:
             remaining = max(0, max_hints - len(session["hints"]))
             return UseHintResponse(
                 hint=session["hints"][request.stage_number],
+                is_available=True,
                 remaining_hints=remaining,
             )
 
-        # Guard against concurrent duplicate for the exact same stage
-        if request.stage_number in session["pending_hints"]:
-            raise HTTPException(
-                status_code=409,
-                detail=f"AI Hint for stage {request.stage_number} is currently being generated. Please wait.",
-            )
-
-        # Reject if hints are not permitted on this difficulty or quota is exhausted
+        # Reject if hints are not permitted on this difficulty
         if max_hints <= 0:
             raise HTTPException(
                 status_code=400,
                 detail=f"AI Hint is not available on {difficulty} difficulty.",
             )
 
-        # Total hint commitments include both completed hints and in-flight reservations
-        total_committed_hints = len(session["hints"]) + len(session["pending_hints"])
-        if total_committed_hints >= max_hints:
+        # Reject if quota is already exhausted
+        if len(session["hints"]) >= max_hints:
             raise HTTPException(
                 status_code=400,
                 detail=f"AI Hint limit exhausted for this run ({max_hints} allowed on {difficulty}).",
             )
 
-        question = next(
-            (item for item in gauntlet if item.get("stage") == request.stage_number),
-            None,
-        )
-        if question is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Stage {request.stage_number} was not found in this session.",
+        # Retrieve pre-generated hint for this stage
+        pre_hint = session.get("pregenerated_hints", {}).get(request.stage_number)
+
+        # If hint was not pre-generated or failed validation, mark unavailable without consuming a charge
+        if not pre_hint:
+            remaining = max(0, max_hints - len(session["hints"]))
+            return UseHintResponse(
+                hint=None,
+                is_available=False,
+                message="AI Hint is unavailable for this question.",
+                remaining_hints=remaining,
             )
 
-        # Atomically reserve the stage
-        session["pending_hints"].add(request.stage_number)
-
-    # Phase 2: External Gemini call occurs OUTSIDE the session lock
-    try:
-        hint = generate_hint_with_gemini(
-            topic=session.get("topic", "Educational Gauntlet"),
-            question=question["question"],
-            options=question["options"],
-            correct_answer=question["correct_answer"],
-            explanation=question.get("explanation", ""),
-        )
-    except Exception as exc:
-        # Roll back reservation atomically
-        with lock:
-            session["pending_hints"].discard(request.stage_number)
-        logger.exception("Hint generation failed for stage %s", request.stage_number)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unable to generate hint at this time: {exc}",
-        ) from exc
-
-    # Phase 3: Finalize cache and clear in-flight reservation under lock
-    with lock:
-        session["pending_hints"].discard(request.stage_number)
-        session["hints"][request.stage_number] = hint
+        # Hint is available: activate and record usage atomically
+        session["hints"][request.stage_number] = pre_hint
         remaining = max(0, max_hints - len(session["hints"]))
-
-    return UseHintResponse(hint=hint, remaining_hints=remaining)
+        return UseHintResponse(
+            hint=pre_hint,
+            is_available=True,
+            remaining_hints=remaining,
+        )
 
 
 @app.post("/use-50-50", response_model=UseFiftyFiftyResponse)

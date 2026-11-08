@@ -294,6 +294,21 @@ class Question(BaseModel):
     explanation: str = Field(
         description="A concise explanation of why the correct answer is right."
     )
+    hint: str | None = Field(
+        default=None,
+        description=(
+            "A concise, educational 1-2 sentence hint that guides reasoning toward "
+            "the correct concept without stating or revealing the correct answer."
+        ),
+    )
+
+    @field_validator("hint")
+    @classmethod
+    def _clean_hint(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned if cleaned else None
 
     @field_validator("question", "correct_answer", "explanation")
     @classmethod
@@ -532,7 +547,9 @@ class UseHintRequest(BaseModel):
 
 
 class UseHintResponse(BaseModel):
-    hint: str
+    hint: str | None = None
+    is_available: bool = True
+    message: str | None = None
     remaining_hints: int | None = None
 
 
@@ -749,7 +766,10 @@ def slice_fallback_gauntlet(
 
 
 def to_public_questions(payload: GauntletPayload) -> list[PublicQuestion]:
-    """Strip correct_answer and explanation before sending questions to the player."""
+    """
+    Strip correct_answer, explanation, and hint before sending questions to the player.
+    Guarantees private fields are never exposed in public responses or serialization.
+    """
     return [
         PublicQuestion(
             stage=question.stage,
