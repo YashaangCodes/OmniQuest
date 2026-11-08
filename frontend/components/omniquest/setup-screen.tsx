@@ -124,10 +124,12 @@ export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
   }
 
   const trimmedTopic = topic.trim()
+  const hasDocument = Boolean(uploadedFile?.text)
+  const canSubmit = Boolean(trimmedTopic || hasDocument) && !isLoading && !isUploadingDoc
 
   async function handleSubmit(event?: React.FormEvent) {
     if (event) event.preventDefault()
-    if (!trimmedTopic || isLoading || isUploadingDoc) return
+    if ((!trimmedTopic && !hasDocument) || isLoading || isUploadingDoc) return
 
     setIsLoading(true)
     setError(null)
@@ -146,7 +148,7 @@ export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
           ? 'Strict Material Only'
           : 'AI Enhanced'
 
-      const response = await generateGame(trimmedTopic, combinedLevel, {
+      const response = await generateGame(trimmedTopic || null, combinedLevel, {
         question_count: length,
         difficulty,
         source_text: uploadedFile?.text || null,
@@ -212,7 +214,7 @@ export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
             <button
               type="button"
               onClick={() => handleSubmit()}
-              disabled={isLoading || !trimmedTopic}
+              disabled={!canSubmit}
               className="mt-5 primary-button"
             >
               <Play size={14} fill="currentColor" /> Enter the arena <ArrowRight size={14} />
@@ -253,9 +255,14 @@ export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
               {/* Topic & Target Level Inputs */}
               <div className="grid gap-3.5 sm:grid-cols-2">
                 <div>
-                  <label htmlFor="topic-input" className="field-label">
-                    Topic <span className="text-[#f16e8d]">*</span>
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="topic-input" className="field-label">
+                      Topic {!hasDocument && <span className="text-[#f16e8d]">*</span>}
+                    </label>
+                    <span className="text-[10px] text-[#697593]">
+                      {hasDocument ? 'Optional with document' : 'Required'}
+                    </span>
+                  </div>
                   <input
                     id="topic-input"
                     value={topic}
@@ -266,8 +273,17 @@ export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
                     maxLength={50}
                     disabled={isLoading}
                     className="field-input"
-                    placeholder="e.g. Data Structures, Quantum Computing..."
+                    placeholder={
+                      hasDocument
+                        ? 'Auto-detected from document, or specify focus...'
+                        : 'e.g. Data Structures, Quantum Computing...'
+                    }
                   />
+                  {hasDocument && !trimmedTopic && (
+                    <p className="mt-1 text-[11px] text-[#75e9ae]">
+                      OmniQuest will automatically detect the primary topic from your document.
+                    </p>
+                  )}
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     <span className="text-[10px] text-[#707c99]">Suggestions:</span>
                     {SUGGESTED_TOPICS.map((suggestion) => (
@@ -510,7 +526,7 @@ export function SetupScreen({ onStart, onHowTo }: SetupScreenProps) {
               <div className="mt-6 flex flex-col gap-2.5 pt-1 sm:flex-row">
                 <button
                   type="submit"
-                  disabled={!trimmedTopic || isLoading || isUploadingDoc}
+                  disabled={!canSubmit}
                   className="primary-button flex-1 justify-center"
                 >
                   {isLoading ? (

@@ -444,18 +444,29 @@ def sanitize_document_text(
 
 
 class GenerateGameRequest(BaseModel):
-    topic: str = Field(..., max_length=MAX_INPUT_LENGTH)
+    topic: str | None = Field(default=None, max_length=MAX_INPUT_LENGTH)
     target_level: str = Field(default="General", max_length=MAX_INPUT_LENGTH)
     question_count: int = Field(default=DEFAULT_QUESTION_COUNT)
     difficulty: Literal["Easy", "Medium", "Hard", "Expert"] = "Medium"
     source_text: str | None = Field(default=None, max_length=DEFAULT_MAX_DOCUMENT_LENGTH)
     generation_mode: Literal["Strict Material Only", "AI Enhanced"] = "AI Enhanced"
 
-    @field_validator("topic", "target_level")
+    @field_validator("topic", mode="before")
     @classmethod
-    def _validate_fields(cls, value: str, info: ValidationInfo) -> str:
-        field_name = info.field_name or "Field"
-        return sanitize_input_text(value, field_name)
+    def _validate_topic(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("Topic must be a string.")
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        return sanitize_input_text(trimmed, "Topic")
+
+    @field_validator("target_level")
+    @classmethod
+    def _validate_target_level(cls, value: str) -> str:
+        return sanitize_input_text(value, "target_level")
 
     @field_validator("difficulty", mode="before")
     @classmethod
@@ -476,6 +487,15 @@ class GenerateGameRequest(BaseModel):
             match = re.search(r"-\s*(Easy|Medium|Hard|Expert)\s*Level", self.target_level, re.IGNORECASE)
             if match:
                 self.difficulty = match.group(1).capitalize()  # type: ignore[assignment]
+        return self
+
+    @model_validator(mode="after")
+    def _validate_topic_and_document_combination(self) -> GenerateGameRequest:
+        has_topic = bool(self.topic and self.topic.strip())
+        has_document = bool(self.source_text and self.source_text.strip())
+
+        if not has_topic and not has_document:
+            raise ValueError("Either a topic or an uploaded document must be provided.")
         return self
 
     @field_validator("question_count")

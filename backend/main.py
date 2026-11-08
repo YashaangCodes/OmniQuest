@@ -63,12 +63,16 @@ from game_logic import (
 )
 from gemini_service import (
     GEMINI_MODEL,
+    AmbiguousDocumentError,
     InsufficientMaterialError,
+    TopicDocumentMismatchError,
     TopicRejectedError,
     build_generation_prompt,
     create_gemini_client,
     generate_gauntlet_with_gemini,
     generate_hint_with_gemini,
+    identify_document_topic,
+    validate_topic_document_relevance,
 )
 
 # ---------------------------------------------------------------------------
@@ -240,14 +244,60 @@ def generate_game(request: GenerateGameRequest) -> GenerateGameResponse:
         request.source_text and request.generation_mode == "Strict Material Only"
     )
 
+    has_topic = bool(request.topic and request.topic.strip())
+    has_document = bool(request.source_text and request.source_text.strip())
+
+    if not has_topic and not has_document:
+        raise HTTPException(
+            status_code=400,
+            detail="Either a topic or an uploaded document must be provided.",
+        )
+
+    # Automatic Topic Identification (Empty Topic + Uploaded Document)
+    if not has_topic and has_document:
+        try:
+            identified = identify_document_topic(request.source_text)
+            request.topic = identified
+        except (AmbiguousDocumentError, InsufficientMaterialError) as exc:
+            raise HTTPException(status_code=400, detail=exc.reason) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            if is_strict_material:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Topic identification failed: {exc}",
+                ) from exc
+            logger.exception("Topic identification failed; using fallback")
+            payload = load_fallback_gauntlet(question_count=request.question_count)
+            total_questions = len(payload.gauntlet)
+            session_id = store_session(payload, difficulty=request.difficulty)
+            return GenerateGameResponse(
+                session_id=session_id,
+                topic=payload.topic,
+                difficulty=request.difficulty,
+                power_up_limits=sessions[session_id]["power_up_limits"],
+                question_count=total_questions,
+                gauntlet=to_public_questions(payload),
+                tier_checkpoints=get_tier_checkpoints(total_questions),
+                tier_target_ip=get_tier_target_ip(5),
+                is_fallback=True,
+                message="API unavailable, loading sample round.",
+            )
+
+    # Relevance Validation (Provided Topic + Uploaded Document)
+    elif has_topic and has_document:
+        try:
+            validate_topic_document_relevance(request.topic, request.source_text)
+        except (TopicDocumentMismatchError, AmbiguousDocumentError) as exc:
+            raise HTTPException(status_code=400, detail=exc.reason) from exc
+        except HTTPException:
+            raise
+
     try:
         payload = generate_gauntlet_with_gemini(request)
-    except TopicRejectedError as exc:
-        # Topic is nonsensical or uninterpretable. Do not serve fallback.
-        raise HTTPException(status_code=400, detail=exc.reason) from exc
-    except InsufficientMaterialError as exc:
-        # Strict Material Only could not generate enough questions strictly from text.
-        # Preserve requirement: NEVER silently replace failed Strict Material Only with fallback.
+    except (TopicRejectedError, InsufficientMaterialError, TopicDocumentMismatchError, AmbiguousDocumentError) as exc:
+        # Topic is nonsensical, material is insufficient, or mismatch detected. Do not serve fallback.
         raise HTTPException(status_code=400, detail=exc.reason) from exc
     except Exception as exc:
         # If Strict Material Only failed due to unexpected API/validation error, fail gracefully without fallback.
@@ -267,7 +317,7 @@ def generate_game(request: GenerateGameRequest) -> GenerateGameResponse:
     session_id = store_session(payload, difficulty=request.difficulty)
     response = GenerateGameResponse(
         session_id=session_id,
-        topic=payload.topic,
+        topic=payload.topic or request.topic or "OmniQuest Challenge",
         difficulty=request.difficulty,
         power_up_limits=sessions[session_id]["power_up_limits"],
         question_count=total_questions,

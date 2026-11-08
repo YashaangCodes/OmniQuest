@@ -182,7 +182,7 @@ def test_generate_game_strict_mode_insufficient_material_no_fallback():
             json={
                 "topic": "History",
                 "question_count": 10,
-                "source_text": "Brief text.",
+                "source_text": "Brief history text.",
                 "generation_mode": "Strict Material Only",
             },
         )

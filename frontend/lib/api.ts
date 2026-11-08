@@ -135,16 +135,19 @@ export async function uploadDocument(file: File): Promise<UploadDocumentResponse
 }
 
 export async function generateGame(
-  topic: string,
+  topic?: string | null,
   target_level: string = 'General',
   options?: GenerateGameOptions,
 ): Promise<GenerateGameResponse> {
-  const normalizedTopic = topic.trim()
+  const normalizedTopic = topic ? topic.trim() : null
   const normalizedLevel = (target_level || '').trim() || 'General'
 
   const payload: Record<string, unknown> = {
-    topic: normalizedTopic,
     target_level: normalizedLevel,
+  }
+
+  if (normalizedTopic) {
+    payload.topic = normalizedTopic
   }
 
   if (options?.question_count) {
