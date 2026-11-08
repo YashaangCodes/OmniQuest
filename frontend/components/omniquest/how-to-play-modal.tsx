@@ -136,7 +136,7 @@ export function HowToPlayModal({ isOpen, onClose, onStart }: HowToPlayModalProps
           </section>
 
           {/* Section 3: Insight Points & Checkpoint Requirements */}
-          <section className="space-y-1.5">
+          <section className="space-y-2">
             <h3 className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-[#e9ad43]">
               <Sparkles size={15} className="text-[#e9ad43]" />
               3. Insight Points (IP) & Checkpoint Requirements
@@ -146,9 +146,53 @@ export function HowToPlayModal({ isOpen, onClose, onStart }: HowToPlayModalProps
               <strong className="text-white">100 base IP</strong> plus{' '}
               <strong className="text-[#e9ad43]">5 bonus IP per remaining second</strong> (up to 200 IP total per question).
             </p>
-            <div className="rounded-xl border border-[#e9ad43]/30 bg-[#e9ad43]/10 p-3 text-xs leading-relaxed text-[#e5caa3]">
-              <strong className="text-[#e9ad43] block mb-1">Tier Gate Checkpoints (Stages 5, 10, 15):</strong>
-              At intermediate checkpoints, you must accumulate at least <strong className="text-white font-mono">300 IP</strong> within that tier to clear the gate and bank your points. If you fall short of 300 IP at a checkpoint, your run ends in elimination.
+            <p className="leading-relaxed">
+              Checkpoint requirements depend on the selected difficulty. Only IP earned within the current tier counts toward its checkpoint—tier-local IP resets to 0 when a new tier begins, while your total IP continues accumulating throughout the run. Failing to meet the required threshold at a checkpoint results in elimination:
+            </p>
+
+            {/* Official Checkpoint Progression Threshold Table */}
+            <div className="overflow-hidden rounded-xl border border-[#233556] bg-[#0c142c]">
+              <table className="w-full text-left font-mono text-[11px]">
+                <thead>
+                  <tr className="border-b border-[#233556] bg-[#121c38] text-[#8e9cb9]">
+                    <th className="p-2 pl-3 font-semibold">Difficulty</th>
+                    <th className="p-2 text-center font-semibold text-[#75e9ae]">Stage 5</th>
+                    <th className="p-2 text-center font-semibold text-[#e9ad43]">Stage 10</th>
+                    <th className="p-2 text-center font-semibold text-[#ff8c58]">Stage 15</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#1b2848] text-white">
+                  <tr>
+                    <td className="p-2 pl-3 font-bold text-[#75e9ae]">Easy</td>
+                    <td className="p-2 text-center text-[#75e9ae]/80 font-sans text-[10px]">No requirement</td>
+                    <td className="p-2 text-center text-[#75e9ae]/80 font-sans text-[10px]">No requirement</td>
+                    <td className="p-2 text-center font-bold">300 IP</td>
+                  </tr>
+                  <tr>
+                    <td className="p-2 pl-3 font-bold text-[#e9ad43]">Medium</td>
+                    <td className="p-2 text-center font-bold">150 IP</td>
+                    <td className="p-2 text-center font-bold">250 IP</td>
+                    <td className="p-2 text-center font-bold">300 IP</td>
+                  </tr>
+                  <tr>
+                    <td className="p-2 pl-3 font-bold text-[#ff8c58]">Hard</td>
+                    <td className="p-2 text-center font-bold">300 IP</td>
+                    <td className="p-2 text-center font-bold">350 IP</td>
+                    <td className="p-2 text-center font-bold">400 IP</td>
+                  </tr>
+                  <tr>
+                    <td className="p-2 pl-3 font-bold text-[#f16e8d]">Expert</td>
+                    <td className="p-2 text-center font-bold">300 IP</td>
+                    <td className="p-2 text-center font-bold">400 IP</td>
+                    <td className="p-2 text-center font-bold">500 IP</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div className="rounded-xl border border-[#e9ad43]/30 bg-[#e9ad43]/10 p-2.5 text-xs leading-relaxed text-[#e5caa3]">
+              <strong className="text-[#e9ad43] block mb-0.5">Tier Meter Reset & Checkpoint Clearance:</strong>
+              Clear each intermediate checkpoint to bank your points and advance. On <strong className="text-white">Easy</strong>, Stages 5 and 10 have no elimination requirement and advance automatically. On <strong className="text-white">Medium</strong>, <strong className="text-white">Hard</strong>, and <strong className="text-white">Expert</strong>, meeting or exceeding the minimum tier-local IP is mandatory to avoid elimination.
             </div>
           </section>
 

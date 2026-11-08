@@ -4,7 +4,6 @@ import { Clock3, Flame, Gem, Snowflake, Timer } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   QUESTION_TIME_LIMIT_MS,
-  TIER_TARGET_IP,
   type Tier,
 } from '@/lib/quiz-data'
 

@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Flag, Trophy, X } from 'lucide-react'
 import {
-  TIER_TARGET_IP,
   getPowerUpLimits,
   getQuestionTier,
   getTierEarnedIP,
