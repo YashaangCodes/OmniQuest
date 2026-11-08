@@ -154,8 +154,8 @@ flowchart TD
     
     subgraph ActiveQuestionRound ["Active Question Round"]
         D --> E["20s Countdown Begins"]
-        E -. Optional .-> F["Activate Power-Up<br/>(Hint / 50-50 / Freeze)"]
-        F -. +5.0s .-> E
+        E -. "Optional" .-> F["Activate Power-Up<br/>(Hint / 50-50 / Freeze)"]
+        F -. "+5.0s" .-> E
         E --> G["Submit Option<br/>(POST /submit-answer)"]
     end
     
@@ -166,14 +166,15 @@ flowchart TD
     I --> J["Explanation Screen<br/>(Timer Paused Indefinitely)"]
     J --> K{"Is Stage a Checkpoint?<br/>(Stage 5, 10, or 15)"}
     
-    K -- Yes --> L{"Tier Local IP >= Threshold?"}
-    L -- No --> M["Elimination Game Over<br/>(Banked IP Saved)"]
-    L -- Yes --> N["Tier Checkpoint Cleared!<br/>(Tier Meter Resets to 0)"]
+    K -- "Yes" --> L{"Tier Local IP >= Threshold?"}
+    L -- "No" --> M["Elimination Game Over<br/>(Banked IP Saved)"]
+    L -- "Yes" --> N["Tier Checkpoint Cleared!<br/>(Tier Meter Resets to 0)"]
     
-    K -- No --> O{"Final Gauntlet Stage?"}
+    K -- "No" --> O{"Final Gauntlet Stage?"}
     N --> O
-    O -- No --> P["Player Clicks Next Stage"] --> D
-    O -- Yes --> Q["Victory Screen & Trophy Room"]
+    O -- "No" --> P["Player Clicks Next Stage"]
+    P --> D
+    O -- "Yes" --> Q["Victory Screen & Trophy Room"]
 ```
 
 ### Escalating Difficulty Tiers
@@ -266,7 +267,7 @@ Follow these instructions to run the full OmniQuest development stack locally.
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/YourUsername/OmniQuest.git
+git clone https://github.com/YashaangCodes/OmniQuest.git
 cd OmniQuest
 ```
 
