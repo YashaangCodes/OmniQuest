@@ -267,7 +267,7 @@ export function SettingsModal({
           <section className="rounded-xl border border-[#1c2745] bg-[#0c1328] p-3.5 space-y-1.5 font-mono text-[10px] text-[#6d7895]">
             <div className="flex justify-between">
               <span>App Version:</span>
-              <span className="text-white">OmniQuest v1.0.0</span>
+              <span className="text-white">OmniQuest v0.9.0 (Beta)</span>
             </div>
             <div className="flex justify-between">
               <span>Backend API:</span>

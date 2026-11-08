@@ -7,6 +7,7 @@ import {
   getPowerUpLimits,
   getQuestionTier,
   getTierEarnedIP,
+  getTierProgressionThreshold,
   isTierGateStage,
   type AnswerRecord,
   type PowerUpId,
@@ -64,6 +65,7 @@ export function GameplayArena({
   const [tierClearedInfo, setTierClearedInfo] = useState<{
     tier: Tier
     earnedIp: number
+    requiredIp?: number | null
   } | null>(null)
   const [isForfeitDialogOpen, setIsForfeitDialogOpen] = useState(false)
   const tierClearedTimerRef = useRef<number | null>(null)
@@ -125,6 +127,16 @@ export function GameplayArena({
   const score = answers.reduce((total, answer) => total + answer.pointsEarned, 0)
   const baseTierScore = getTierEarnedIP(currentTier, answers, gauntlet)
 
+  // Progression threshold for current tier if a checkpoint exists after this tier
+  const hasCheckpointAfterTier =
+    (currentTier === 1 && gauntlet.length >= 10) ||
+    (currentTier === 2 && gauntlet.length >= 15) ||
+    (currentTier === 3 && gauntlet.length === 20)
+
+  const currentTierTarget = hasCheckpointAfterTier
+    ? getTierProgressionThreshold(difficulty, currentTier as 1 | 2 | 3)
+    : null
+
   function handleRoundComplete(
     record: AnswerRecord,
     streakInfo?: { streak: number; streakFireActive: boolean },
@@ -140,20 +152,21 @@ export function GameplayArena({
     if (isTierGate) {
       // Include the IP earned for that final question of the tier
       const tierEarnedIp = getTierEarnedIP(currentTier, nextAnswers, gauntlet)
+      const requiredIp = getTierProgressionThreshold(difficulty, currentTier as 1 | 2 | 3)
 
-      if (tierEarnedIp < TIER_TARGET_IP) {
-        // If tier IP is below 300, eliminate immediately and show results
+      if (requiredIp !== null && requiredIp > 0 && tierEarnedIp < requiredIp) {
+        // If tier IP is below required threshold, eliminate immediately and show results
         onComplete(nextAnswers, {
           tier: currentTier,
           earnedIp: tierEarnedIp,
-          requiredIp: TIER_TARGET_IP,
+          requiredIp,
         })
         return
       }
 
-      // If tier IP is at least 300, show Tier Cleared modal, then advance
+      // If requirements met (or no requirement), show Tier Cleared modal, then advance
       setAnswers(nextAnswers)
-      setTierClearedInfo({ tier: currentTier, earnedIp: tierEarnedIp })
+      setTierClearedInfo({ tier: currentTier, earnedIp: tierEarnedIp, requiredIp })
       setUsedOnCurrentStage({ hint: false, freeze: false, fiftyFifty: false })
 
       tierClearedTimerRef.current = window.setTimeout(() => {
@@ -214,7 +227,7 @@ export function GameplayArena({
           totalQuestions={gauntlet.length}
           score={score}
           tierScore={baseTierScore}
-          tierTarget={TIER_TARGET_IP}
+          tierTarget={currentTierTarget}
           streak={streak}
           streakFireActive={streakFireActive}
           powerUps={powerUpStatus}
@@ -248,7 +261,9 @@ export function GameplayArena({
               <span className="font-mono font-bold text-[#75e9ae]">
                 {tierClearedInfo.earnedIp} IP
               </span>{' '}
-              (checkpoint requirement: {TIER_TARGET_IP} IP)
+              {tierClearedInfo.requiredIp === null || tierClearedInfo.requiredIp === 0
+                ? '(no IP requirement)'
+                : `(checkpoint requirement: ${tierClearedInfo.requiredIp} IP)`}
             </p>
             <div className="mt-6 flex items-center gap-2 rounded-full border border-[#9e67ff]/40 bg-[#9e67ff]/10 px-4 py-1.5 text-xs font-mono text-[#9e67ff]">
               <span>Advancing to Tier {tierClearedInfo.tier + 1}</span>

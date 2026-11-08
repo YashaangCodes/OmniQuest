@@ -21,6 +21,7 @@ export interface GenerateGameResponse {
   gauntlet: PublicQuestion[]
   tier_checkpoints?: number[]
   tier_target_ip?: number
+  tier_progression_thresholds?: Record<number, number | null>
   is_fallback?: boolean
   message?: string
 }
@@ -61,10 +62,36 @@ export interface UseFiftyFiftyResponse {
   remaining_fifty_fifty?: number
 }
 
+export interface StartStageRequest {
+  session_id: string
+  stage_number: number
+}
+
+export interface StartStageResponse {
+  session_id: string
+  stage_number: number
+  time_limit_seconds?: number
+  remaining_seconds?: number
+  is_active?: boolean
+}
+
+export interface UseTimeFreezeRequest {
+  session_id: string
+  stage_number: number
+}
+
+export interface UseTimeFreezeResponse {
+  is_frozen?: boolean
+  freeze_duration_seconds?: number
+  remaining_time_freezes?: number
+}
+
 export interface SubmitAnswerRequest {
   session_id: string
   stage_number: number
   selected_option: string
+  remaining_time_ms?: number
+  response_time_ms?: number
 }
 
 export interface SubmitAnswerResponse {
@@ -74,8 +101,17 @@ export interface SubmitAnswerResponse {
   current_streak?: number
   streak_fire_active?: boolean
   base_ip_awarded?: number
+  speed_ip_awarded?: number
+  streak_ip_awarded?: number
   bonus_ip_awarded?: number
+  points_awarded?: number
   total_ip_awarded?: number
+  tier_local_ip?: number
+  tier_required_ip?: number | null
+  tier_progress_percent?: number
+  checkpoint_passed?: boolean | null
+  is_checkpoint_stage?: boolean
+  is_game_over?: boolean
 }
 
 function extractErrorMessage(data: unknown, fallback: string): string {
@@ -249,6 +285,74 @@ export async function useFiftyFifty(
 
   if (!response.ok) {
     let errorDetail = `50/50 request failed (${response.status})`
+    try {
+      const data = await response.json()
+      errorDetail = extractErrorMessage(data, errorDetail)
+    } catch {
+      // Non-JSON response
+    }
+    throw new Error(errorDetail)
+  }
+
+  return response.json()
+}
+
+export async function startStage(
+  sessionId: string,
+  stageNumber: number,
+): Promise<StartStageResponse> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/start-stage`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        stage_number: stageNumber,
+      }),
+    })
+  } catch {
+    throw new Error(`Unable to connect to the backend at ${API_BASE_URL}.`)
+  }
+
+  if (!response.ok) {
+    let errorDetail = `Failed to start stage (${response.status})`
+    try {
+      const data = await response.json()
+      errorDetail = extractErrorMessage(data, errorDetail)
+    } catch {
+      // Non-JSON response
+    }
+    throw new Error(errorDetail)
+  }
+
+  return response.json()
+}
+
+export async function useTimeFreeze(
+  sessionId: string,
+  stageNumber: number,
+): Promise<UseTimeFreezeResponse> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}/use-freeze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        session_id: sessionId,
+        stage_number: stageNumber,
+      }),
+    })
+  } catch {
+    throw new Error(`Unable to connect to the backend at ${API_BASE_URL}.`)
+  }
+
+  if (!response.ok) {
+    let errorDetail = `Time Freeze failed (${response.status})`
     try {
       const data = await response.json()
       errorDetail = extractErrorMessage(data, errorDetail)

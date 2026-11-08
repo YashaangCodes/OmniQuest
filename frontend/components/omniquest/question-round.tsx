@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { submitAnswer, useFiftyFifty, useHint } from '@/lib/api'
+import { startStage, submitAnswer, useFiftyFifty, useHint, useTimeFreeze } from '@/lib/api'
 import {
   OPTION_LETTERS,
   QUESTION_TIME_LIMIT_MS,
@@ -41,7 +41,7 @@ interface QuestionRoundProps {
   totalQuestions: number
   score: number
   tierScore?: number
-  tierTarget?: number
+  tierTarget?: number | null
   streak: number
   streakFireActive: boolean
   powerUps: Record<PowerUpId, PowerUpItemStatus>
@@ -64,7 +64,7 @@ export function QuestionRound({
   totalQuestions,
   score,
   tierScore = 0,
-  tierTarget = 300,
+  tierTarget = null,
   streak,
   streakFireActive,
   powerUps,
@@ -120,13 +120,21 @@ export function QuestionRound({
         session_id: sessionId,
         stage_number: question.stage,
         selected_option: optionText,
+        remaining_time_ms: remainingMs,
+        response_time_ms: QUESTION_TIME_LIMIT_MS - remainingMs,
       })
 
       const isCorrect = response.is_correct
-      const speedBonus = isCorrect ? Math.round(remainingMs / 1000) * 5 : 0
+      const speedBonus =
+        response.speed_ip_awarded !== undefined
+          ? response.speed_ip_awarded
+          : isCorrect
+            ? Math.round(remainingMs / 1000) * 5
+            : 0
       const basePoints = response.base_ip_awarded ?? (isCorrect ? 100 : 0)
       const streakBonus = response.bonus_ip_awarded ?? 0
-      const pointsEarned = isCorrect ? basePoints + speedBonus + streakBonus : 0
+      const pointsEarned =
+        response.points_awarded ?? (isCorrect ? basePoints + speedBonus + streakBonus : 0)
 
       if (response.current_streak !== undefined) {
         setCurrentStreak(response.current_streak)
@@ -159,6 +167,22 @@ export function QuestionRound({
       setSubmissionError(errorMsg)
     }
   }
+
+  // Authoritative server-side timer start
+  useEffect(() => {
+    if (!sessionId || !question?.stage) return
+    startStage(sessionId, question.stage)
+      .then((res) => {
+        if (typeof res.remaining_seconds === 'number' && res.remaining_seconds > 0) {
+          const serverMs = Math.round(res.remaining_seconds * 1000)
+          // Synchronize if server has less time remaining (e.g. remount / resume)
+          setTimeLeftMs((current) => Math.min(current, serverMs))
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to initialize server timer for stage:', err)
+      })
+  }, [sessionId, question?.stage])
 
   // Timer tick down
   useEffect(() => {
@@ -202,8 +226,22 @@ export function QuestionRound({
 
     if (id === 'freeze') {
       if (isFrozen) return
-      setIsFrozen(true)
-      onUsePowerUp('freeze', Math.max(0, status.remaining - 1))
+      setLoadingPowerUps((prev) => ({ ...prev, freeze: true }))
+      try {
+        const res = await useTimeFreeze(sessionId, stage)
+        setIsFrozen(true)
+        const nextRem =
+          typeof res.remaining_time_freezes === 'number'
+            ? res.remaining_time_freezes
+            : Math.max(0, status.remaining - 1)
+        onUsePowerUp('freeze', nextRem)
+      } catch (err: unknown) {
+        // Failed request must NOT consume charge
+        const errMsg = err instanceof Error ? err.message : 'Could not activate Time Freeze.'
+        setSubmissionError(errMsg)
+      } finally {
+        setLoadingPowerUps((prev) => ({ ...prev, freeze: false }))
+      }
     } else if (id === 'hint') {
       setLoadingPowerUps((prev) => ({ ...prev, hint: true }))
       try {
@@ -325,10 +363,24 @@ export function QuestionRound({
                 <span className="eyebrow">
                   STAGE {stage} OF {totalQuestions}
                 </span>
-                <div className="mt-1 flex items-center gap-2">
+                <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span className="tier-badge">{tierStyles.label}</span>
                   <span className="text-xs text-[#76839f]">
                     {stage === totalQuestions ? '· Final challenge' : '· Checkpoint run'}
+                  </span>
+                  <span className="xl:hidden inline-flex items-center gap-1 rounded bg-[#131b34] border border-[#273559] px-2 py-0.5 text-[10px] font-mono text-[#a2aeca]">
+                    <span className="text-[#8492b4]">Tier:</span>
+                    <span
+                      className={
+                        tierTarget !== null && tierTarget > 0 && currentTierScore >= tierTarget
+                          ? 'text-[#73e6a8] font-bold'
+                          : ''
+                      }
+                    >
+                      {tierTarget === null || tierTarget === 0
+                        ? 'No IP requirement'
+                        : `${currentTierScore} / ${tierTarget} IP`}
+                    </span>
                   </span>
                 </div>
               </div>

@@ -59,7 +59,7 @@ export function HowToPlayModal({ isOpen, onClose, onStart }: HowToPlayModalProps
             </div>
             <div>
               <h2 id="how-to-play-modal-title" className="text-lg font-bold tracking-tight text-white">
-                How to Play OmniQuest v1.0
+                How to Play OmniQuest v0.9
               </h2>
               <p className="text-[11px] text-[#707c99]">The Official Arena Combat & Knowledge Rules</p>
             </div>
@@ -187,7 +187,7 @@ export function HowToPlayModal({ isOpen, onClose, onStart }: HowToPlayModalProps
               6. Tactical Power-Ups & Difficulty Allocation
             </h3>
             <p className="leading-relaxed">
-              OmniQuest v1.0 enforces an official difficulty-based power-up quota per game run. These limits apply uniformly across all gauntlet lengths (5, 10, 15, or 20 questions):
+              OmniQuest v0.9 enforces an official difficulty-based power-up quota per game run. These limits apply uniformly across all gauntlet lengths (5, 10, 15, or 20 questions):
             </p>
 
             {/* Official Power-Up Allocation Table */}

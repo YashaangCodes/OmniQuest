@@ -21,7 +21,7 @@ export interface PowerupsProps {
   currentStage: number
   totalStages: number
   tierScore?: number
-  tierTarget?: number
+  tierTarget?: number | null
   onUse: (id: PowerUpId) => void
 }
 
@@ -36,7 +36,7 @@ export function Powerups({
   currentStage,
   totalStages,
   tierScore = 0,
-  tierTarget = 300,
+  tierTarget = null,
   onUse,
 }: PowerupsProps) {
   // Find next checkpoint stage (5, 10, 15) strictly less than totalStages
@@ -179,7 +179,9 @@ export function Powerups({
         </div>
         <p className="mt-2 text-[11px] leading-4 text-[#a0abc1]">
           {nextCheckpoint
-            ? `Earn at least ${tierTarget} IP in this tier to unlock the next tier checkpoint.`
+            ? tierTarget === null || tierTarget === 0
+              ? 'Automatic progression for this tier (no IP requirement).'
+              : `Earn at least ${tierTarget} IP in this tier to unlock the next tier checkpoint.`
             : 'Conquer the final stage to complete the gauntlet.'}
         </p>
 
@@ -187,17 +189,35 @@ export function Powerups({
           <div className="mt-3">
             <div className="flex justify-between text-[10px] text-[#707f9c] font-mono mb-1">
               <span>Tier progress</span>
-              <span className={tierScore >= tierTarget ? 'text-[#73e6a8] font-bold' : ''}>
-                {tierScore} / {tierTarget} IP
+              <span
+                className={
+                  tierTarget === null || tierTarget === 0 || tierScore >= tierTarget
+                    ? 'text-[#73e6a8] font-bold'
+                    : ''
+                }
+              >
+                {tierTarget === null || tierTarget === 0
+                  ? `${tierScore} IP · No IP requirement`
+                  : tierScore >= tierTarget
+                    ? `${tierScore} / ${tierTarget} IP (Qualified)`
+                    : `${tierScore} / ${tierTarget} IP (${Math.min(100, Math.round((tierScore / tierTarget) * 100))}%)`}
               </span>
             </div>
             <div className="h-1.5 w-full rounded-full bg-[#1b2848] overflow-hidden">
               <div
                 className={cn(
                   'h-full rounded-full transition-all duration-300',
-                  tierScore >= tierTarget ? 'bg-[#73e6a8]' : 'bg-[#9e67ff]',
+                  tierTarget === null || tierTarget === 0 || tierScore >= tierTarget
+                    ? 'bg-[#73e6a8]'
+                    : 'bg-[#9e67ff]',
                 )}
-                style={{ width: `${Math.min(100, (tierScore / tierTarget) * 100)}%` }}
+                style={{
+                  width: `${
+                    tierTarget === null || tierTarget === 0
+                      ? 100
+                      : Math.min(100, (tierScore / tierTarget) * 100)
+                  }%`,
+                }}
               />
             </div>
           </div>

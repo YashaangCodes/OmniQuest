@@ -1,5 +1,5 @@
 /**
- * OmniQuest v1.0 Local Storage Management
+ * OmniQuest v0.9 Local Storage Management
  * Handles persistent guest statistics, completed game history, and achievement unlocking.
  * Fully client-safe with defensive SSR checks.
  */

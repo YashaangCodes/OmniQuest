@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'OmniQuest v1.0 — Knowledge Arena',
+  title: 'OmniQuest v0.9 — Knowledge Arena',
   description:
     'OmniQuest is an AI-powered gamified learning arena. Pick a topic or upload material, conquer the gauntlet, and earn Insight Points.',
   generator: 'v0.app',

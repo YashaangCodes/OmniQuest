@@ -20,7 +20,7 @@ interface ArenaTopBarProps {
   isFrozen: boolean
   currentTier?: Tier
   tierScore?: number
-  tierTarget?: number
+  tierTarget?: number | null
   onForfeitClick?: () => void
 }
 
@@ -36,7 +36,7 @@ export function ArenaTopBar({
   isFrozen,
   currentTier,
   tierScore = 0,
-  tierTarget = TIER_TARGET_IP,
+  tierTarget = null,
   onForfeitClick,
 }: ArenaTopBarProps) {
   const secondsLeft = Math.ceil(timeLeftMs / 1000)
@@ -92,6 +92,37 @@ export function ArenaTopBar({
         <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-[#273354] bg-[#111932] px-2.5 py-1.5 text-xs font-mono text-white">
           <Gem size={14} className="text-[#e9ad43]" />
           <span className="font-bold tabular-nums">{score.toLocaleString()}</span>
+          <span className="text-[10px] text-[#73809e]">IP</span>
+        </div>
+
+        {/* Tier Progression pill */}
+        <div
+          className="hidden md:flex items-center gap-1.5 rounded-lg border border-[#273354] bg-[#111932] px-2.5 py-1.5 text-xs font-mono text-white"
+          title={
+            tierTarget === null || tierTarget === 0
+              ? 'Tier Progression: No IP requirement'
+              : `Tier Progression: ${tierScore} / ${tierTarget} IP (${
+                  tierScore >= tierTarget
+                    ? 'Qualified'
+                    : `${Math.min(100, Math.round((tierScore / tierTarget) * 100))}%`
+                })`
+          }
+        >
+          <span className="text-[10px] uppercase font-bold text-[#9e67ff]">
+            {currentTier ? `T${currentTier}` : 'Tier'}
+          </span>
+          <span
+            className={cn(
+              'font-bold tabular-nums',
+              tierTarget !== null && tierTarget > 0 && tierScore >= tierTarget
+                ? 'text-[#73e6a8]'
+                : 'text-[#c2cbde]',
+            )}
+          >
+            {tierTarget === null || tierTarget === 0
+              ? 'No req'
+              : `${tierScore}/${tierTarget}`}
+          </span>
           <span className="text-[10px] text-[#73809e]">IP</span>
         </div>
 

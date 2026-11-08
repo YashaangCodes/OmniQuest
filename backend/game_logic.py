@@ -8,6 +8,7 @@ v0.5 game mechanics, scoring proportions, and fairness guarantees.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import random
 import re
@@ -38,12 +39,45 @@ POWER_UP_LIMITS: dict[str, dict[str, int]] = {
     "Expert": {"hint": 0, "fifty_fifty": 0, "time_freeze": 0},
 }
 
+# Progression thresholds required within each tier to qualify for advancement:
+# difficulty -> {from_tier: required_tier_local_ip (None means no requirement / automatic progression)}
+TIER_PROGRESSION_THRESHOLDS: dict[str, dict[int, int | None]] = {
+    "Easy": {1: None, 2: None, 3: 300},
+    "Medium": {1: 150, 2: 250, 3: 300},
+    "Hard": {1: 300, 2: 350, 3: 400},
+    "Expert": {1: 300, 2: 400, 3: 500},
+}
+
 # Base scoring constants
 BASE_IP_PER_QUESTION: int = 100
 MAX_BONUS_IP_PER_QUESTION: int = 100  # Up to 200 total per question
 TARGET_IP_PERCENTAGE: float = 0.60  # 60% of base points required to pass tier gate
 STREAK_FIRE_THRESHOLD: int = 3
 STREAK_FIRE_BONUS_IP: int = 50
+QUESTION_TIME_LIMIT_MS: int = 20_000
+QUESTION_TIME_LIMIT_SECONDS: float = 20.0
+TIME_FREEZE_DURATION_SECONDS: float = 5.0
+DEADLINE_GRACE_BUFFER_SECONDS: float = 1.0
+SPEED_BONUS_MAX_IP: int = 100
+SPEED_BONUS_POINTS_PER_SECOND: int = 5
+
+
+def calculate_speed_bonus(
+    remaining_time_ms: int | float | None, is_correct: bool = True
+) -> int:
+    """
+    Calculate the Speed Bonus awarded for a correct answer based on remaining clock time.
+    Formula: Math.round(remaining_time_ms / 1000) * 5, bounded between 0 and 100 IP.
+    Reproduces JavaScript Math.round behavior at exact half-second boundaries (round half-up).
+    Returns 0 if answer is incorrect, or if remaining_time_ms is None or <= 0.
+    """
+    if not is_correct or remaining_time_ms is None or remaining_time_ms <= 0:
+        return 0
+    clamped_ms = min(float(remaining_time_ms), float(QUESTION_TIME_LIMIT_MS))
+    # Reproduce JS Math.round for non-negative remaining time
+    seconds = int(math.floor((clamped_ms / 1000.0) + 0.5))
+    bonus = int(seconds * SPEED_BONUS_POINTS_PER_SECOND)
+    return max(0, min(SPEED_BONUS_MAX_IP, bonus))
 
 
 def get_max_document_length() -> int:
@@ -121,6 +155,25 @@ def get_tier_target_ip(tier_question_count: int = 5) -> int:
     5 questions * 100 base IP = 500 base IP -> 60% = 300 IP.
     """
     return round(tier_question_count * BASE_IP_PER_QUESTION * TARGET_IP_PERCENTAGE)
+
+
+def get_tier_progression_threshold(difficulty: str, from_tier: int) -> int | None:
+    """
+    Return the IP required within from_tier to qualify for progression into (from_tier + 1).
+    Returns None if there is no IP requirement (automatic progression, e.g. Easy tiers 1 and 2).
+    Raises ValueError for invalid difficulty or invalid from_tier (must be 1, 2, or 3).
+    """
+    if not isinstance(difficulty, str):
+        raise ValueError("Difficulty must be a string.")
+    normalized = difficulty.strip().capitalize()
+    if normalized not in TIER_PROGRESSION_THRESHOLDS:
+        allowed = ", ".join(TIER_PROGRESSION_THRESHOLDS.keys())
+        raise ValueError(f"Invalid difficulty '{difficulty}'. Allowed: {allowed}.")
+    if from_tier not in (1, 2, 3):
+        raise ValueError(
+            f"Invalid from_tier {from_tier}. Checkpoints only exist from tiers 1, 2, and 3."
+        )
+    return TIER_PROGRESSION_THRESHOLDS[normalized][from_tier]
 
 
 # ---------------------------------------------------------------------------
@@ -486,14 +539,19 @@ class GenerateGameRequest(BaseModel):
     @field_validator("difficulty", mode="before")
     @classmethod
     def _validate_difficulty(cls, value: Any) -> str:
-        if not value or not isinstance(value, str):
+        if value is None:
             return "Medium"
-        normalized = value.strip().capitalize()
-        if normalized not in POWER_UP_LIMITS:
-            raise ValueError(
-                f"Invalid difficulty '{value}'. Allowed: {', '.join(POWER_UP_LIMITS.keys())}."
-            )
-        return normalized
+        if isinstance(value, str):
+            trimmed = value.strip()
+            if not trimmed:
+                return "Medium"
+            normalized = trimmed.capitalize()
+            if normalized not in TIER_PROGRESSION_THRESHOLDS:
+                raise ValueError(
+                    f"Invalid difficulty '{value}'. Allowed: {', '.join(TIER_PROGRESSION_THRESHOLDS.keys())}."
+                )
+            return normalized
+        raise ValueError("Difficulty must be a string.")
 
     @model_validator(mode="after")
     def _infer_difficulty_from_target_level(self) -> GenerateGameRequest:
@@ -536,7 +594,8 @@ class GenerateGameResponse(BaseModel):
     question_count: int
     gauntlet: list[PublicQuestion]
     tier_checkpoints: list[int]
-    tier_target_ip: int
+    tier_target_ip: int = 300
+    tier_progression_thresholds: dict[int, int | None] | None = None
     is_fallback: bool | None = None
     message: str | None = None
 
@@ -563,6 +622,30 @@ class UseFiftyFiftyResponse(BaseModel):
     remaining_fifty_fifty: int | None = None
 
 
+class StartStageRequest(BaseModel):
+    session_id: str
+    stage_number: int
+
+
+class StartStageResponse(BaseModel):
+    session_id: str
+    stage_number: int
+    time_limit_seconds: int = 20
+    remaining_seconds: float = 20.0
+    is_active: bool = True
+
+
+class UseTimeFreezeRequest(BaseModel):
+    session_id: str
+    stage_number: int
+
+
+class UseTimeFreezeResponse(BaseModel):
+    is_frozen: bool = True
+    freeze_duration_seconds: float = 5.0
+    remaining_time_freezes: int | None = None
+
+
 class ForfeitGameRequest(BaseModel):
     session_id: str
 
@@ -577,6 +660,14 @@ class SubmitAnswerRequest(BaseModel):
     session_id: str
     stage_number: int
     selected_option: str
+    remaining_time_ms: int | float | None = Field(
+        default=None,
+        description="Remaining time on question clock in milliseconds (0 to 20,000 ms).",
+    )
+    response_time_ms: int | float | None = Field(
+        default=None,
+        description="Elapsed response time in milliseconds (0 to 20,000 ms).",
+    )
 
 
 class SubmitAnswerResponse(BaseModel):
@@ -586,8 +677,17 @@ class SubmitAnswerResponse(BaseModel):
     current_streak: int = 0
     streak_fire_active: bool = False
     base_ip_awarded: int = 0
+    speed_ip_awarded: int = 0
+    streak_ip_awarded: int = 0
     bonus_ip_awarded: int = 0
+    points_awarded: int = 0
     total_ip_awarded: int = 0
+    tier_local_ip: int = 0
+    tier_required_ip: int | None = None
+    tier_progress_percent: int = 0
+    checkpoint_passed: bool | None = None
+    is_checkpoint_stage: bool = False
+    is_game_over: bool = False
 
 
 class UploadDocumentResponse(BaseModel):

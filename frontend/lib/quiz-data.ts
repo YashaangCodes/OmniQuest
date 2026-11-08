@@ -111,6 +111,26 @@ export function getTier(stage: number): Tier {
 export const TIER_TARGET_IP = 300
 export const TIER_GATE_STAGES = [5, 10, 15] as const
 
+export const TIER_PROGRESSION_THRESHOLDS: Record<
+  Difficulty,
+  Record<1 | 2 | 3, number | null>
+> = {
+  Easy: { 1: null, 2: null, 3: 300 },
+  Medium: { 1: 150, 2: 250, 3: 300 },
+  Hard: { 1: 300, 2: 350, 3: 400 },
+  Expert: { 1: 300, 2: 400, 3: 500 },
+}
+
+export function getTierProgressionThreshold(
+  difficulty: string = 'Medium',
+  fromTier: 1 | 2 | 3,
+): number | null {
+  const trimmed = (difficulty || 'Medium').trim()
+  const normalized = (trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase()) as Difficulty
+  const diffMatrix = TIER_PROGRESSION_THRESHOLDS[normalized] || TIER_PROGRESSION_THRESHOLDS.Medium
+  return diffMatrix[fromTier] ?? null
+}
+
 export interface TierElimination {
   tier: Tier
   earnedIp: number

@@ -166,7 +166,7 @@ function SideNav({
 
       <div className="border-t border-[#1c2745] p-5 shrink-0">
         <div className="flex items-center justify-between text-[10px] font-bold text-[#65718d]">
-          <span>OMNIQUEST v1.0</span>
+          <span>OMNIQUEST v0.9</span>
           <span className="flex items-center gap-1.5 text-[#71e9ab]">
             <span className="h-1.5 w-1.5 rounded-full bg-[#71e9ab] animate-pulse" />
             ONLINE
@@ -478,7 +478,7 @@ export function OmniQuestApp() {
 
             <div className="border-t border-[#1c2745] pt-4">
               <div className="flex items-center justify-between text-[10px] font-bold text-[#65718d]">
-                <span>OMNIQUEST v1.0</span>
+                <span>OMNIQUEST v0.9</span>
                 <span className="flex items-center gap-1.5 text-[#71e9ab]">
                   <span className="h-1.5 w-1.5 rounded-full bg-[#71e9ab] animate-pulse" />
                   ONLINE
